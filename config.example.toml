@@ -1,0 +1,65 @@
+# Copia este archivo a config.toml. Los secretos NO van aquí: se leen del entorno
+#   APIFOOTBALL_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, NTFY_TOPIC
+
+[agent]
+poll_seconds = 30            # cada cuánto consulta (cuida tu cuota diaria de requests)
+db_path = "goalalert.db"     # historial de señales para `goalalert report`
+cooldown_min = 10            # mismo pick: espera mínima para volver a alertar...
+realert_ev_gain = 0.04       # ...y solo si el EV mejoró al menos 4 puntos
+max_signals_per_match = 2
+max_alerts_per_cycle = 3
+confirm_odds_tolerance = 0.03  # si la cuota re-consultada cae más de 3%, no se alerta
+require_stats = true         # sin tiros/xG el modelo solo tiene el prior: no alerta
+bankroll = 0                 # en tu moneda; 0 = solo muestra el % sugerido
+currency = "S/ "
+
+[provider]
+name = "api-football"        # "sim" para probar sin API key
+# Vacío = todas las ligas con partidos en vivo. Ejecuta `goalalert markets -c config.toml`
+# para ver los ids reales de tu cuenta (Liga 1 Perú, Libertadores, ligas europeas, etc.).
+leagues = []
+stats_ttl_s = 120            # cada cuánto refresca tiros/xG por partido
+max_enrich_per_cycle = 15
+
+# Si `goalalert markets` muestra nombres distintos, agrégalos aquí (comparación exacta, sin mayúsculas).
+# [provider.bet_names]
+# over_under = ["over/under line", "match goals"]
+# btts = ["both teams to score"]
+# next_goal = ["next goal"]
+
+[value]
+markets = ["over_under", "btts", "next_goal"]
+min_ev = 0.06                # valor esperado mínimo con la probabilidad combinada
+min_prob = 0.60              # probabilidad mínima de acertar
+min_odds = 1.40
+max_odds = 4.00
+min_minute = 8               # antes no hay evidencia en vivo suficiente
+max_minute = 82              # al final las cuotas se suspenden y el margen domina
+market_weight = 0.40         # 0 = confiar solo en el modelo; 1 = solo en el mercado (nunca alerta)
+max_divergence = 0.15        # modelo vs mercado: más que esto suele ser dato viejo o modelo roto
+max_odds_age_s = 60
+kelly_fraction = 0.10
+max_stake_pct = 0.015        # tope por señal como fracción del bankroll
+
+[model]
+home_xg = 1.45               # goles esperados a 90' del local (prior global)
+away_xg = 1.15
+red_own = 0.72               # multiplicador de goles del equipo con expulsado
+red_opp = 1.25               # ...y del rival
+pressure_k0 = 2.0            # cuánta evidencia en vivo hace falta para mover el prior (mayor = más lento)
+pressure_min = 0.65
+pressure_max = 1.60
+
+# Prior propio por liga: [goles local, goles visita] a 90'. Calíbralos con el histórico de tu liga.
+[model.league_priors]
+# "281" = [1.40, 1.05]
+
+# Multiplicador de la intensidad propia según (goles propios - rivales): ataca más el que pierde.
+[model.score_mult]
+# "-1" = 1.10
+
+[notify]
+console = true
+telegram = false             # true: exige TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID
+ntfy = false                 # true: exige NTFY_TOPIC (push al celular con la app ntfy)
+ntfy_server = "https://ntfy.sh"
