@@ -54,7 +54,9 @@ def test_big_divergence_is_treated_as_bad_data():
 def test_minute_window_and_status():
     cfg = ValueConfig()
     q = ou(0.5, 1.50, 2.90)
-    assert find_signals(match(elapsed=3), q, PROBS, cfg, NOW) == []
+    assert cfg.min_minute == 20
+    assert find_signals(match(elapsed=19), q, PROBS, cfg, NOW) == []
+    assert len(find_signals(match(elapsed=20), q, PROBS, cfg, NOW)) == 1
     assert find_signals(match(elapsed=88, status="2H"), q, PROBS, cfg, NOW) == []
     assert find_signals(match(status="HT", elapsed=45), q, PROBS, cfg, NOW) == []
 

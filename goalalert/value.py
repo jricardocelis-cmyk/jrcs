@@ -18,7 +18,7 @@ class ValueConfig:
     min_prob: float = 0.60  # probabilidad combinada mínima de acertar
     min_odds: float = 1.40
     max_odds: float = 4.00
-    min_minute: int = 8
+    min_minute: int = 20  # antes de ~20' el modelo es casi solo el prior de liga: el mercado lo conoce mejor
     max_minute: int = 82
     market_weight: float = 0.40  # peso del mercado (sin margen) en la probabilidad final
     max_divergence: float = 0.15  # |p_modelo - p_mercado| mayor => dato viejo o modelo roto
