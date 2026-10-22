@@ -27,6 +27,9 @@ def test_signal_when_model_beats_market_within_band():
     assert s.p_model > s.p_final > s.p_market
     assert s.ev == pytest.approx(s.p_final * 1.50 - 1) and s.ev >= 0.06
     assert 0 < s.stake_pct <= ValueConfig().max_stake_pct
+    # cuota mínima: a ese precio el EV combinado queda justo en el mínimo configurado
+    assert s.p_final * s.min_odds - 1 == pytest.approx(ValueConfig().min_ev)
+    assert 1 / s.p_final < s.min_odds < s.odds
 
 
 def test_fair_or_worse_odds_give_no_signal():
@@ -95,3 +98,4 @@ def test_signal_text_mentions_pick_and_odds():
     s = find_signals(match(), ou(0.5, 1.50, 2.90), PROBS, ValueConfig(), NOW)[0]
     text = s.describe(bankroll=1000, currency="S/ ")
     assert "Más de 0.5 goles @ 1.50" in text and "S/ " in text
+    assert f"EN TU CASA: apuesta solo si paga {s.min_odds:.2f} o más" in text

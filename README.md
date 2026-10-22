@@ -28,6 +28,12 @@ Los parsers de API-Football siguen la forma documentada de la API pero **no se c
 
 Para fijar la liga local, pon su id en `leagues` (Liga 1 de Perú, Libertadores, etc.; los ids salen de `markets`). Con `leagues = []` vigila todo lo que esté en vivo.
 
+## Tu casa peruana
+
+Apuesta Total, Inkabet, Doradobet, Betano, Betsson y similares no publican una API de cuotas, y automatizar la lectura de sus sitios va contra sus términos de uso y suele terminar en cuenta cerrada, además de romperse cada vez que cambian la página. Por eso el agente no las lee. El mercado de referencia (el de API-Football) sirve para detectar la oportunidad y validar el modelo, y la decisión final se toma contra el precio de tu casa.
+
+Cada alerta incluye una línea «EN TU CASA» con la **cuota mínima** a la que sigue habiendo valor: `(1 + min_ev) / probabilidad combinada`. Si tu casa paga esa cuota o más en el mismo mercado y con el mismo marcador, la señal sigue en pie; si paga menos, se descarta. Esto importa porque el valor esperado de la alerta está calculado a la cuota de referencia, y una casa con más margen en vivo puede borrarlo por completo. También hay que apostar el stake sugerido sobre la cuota que realmente te den, no sobre la de referencia.
+
 ## Alertas al celular
 
 - **Telegram**: crea un bot con @BotFather, exporta `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`, y pon `telegram = true`.

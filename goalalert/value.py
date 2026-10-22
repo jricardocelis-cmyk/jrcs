@@ -48,6 +48,7 @@ class Signal:
     stake_pct: float
     lam_home: float
     lam_away: float
+    min_odds: float = 0.0  # cuota mínima (en cualquier casa) que mantiene el EV mínimo con p_final
 
     @property
     def key(self) -> tuple[int, str, str, float | None]:
@@ -66,14 +67,21 @@ class Signal:
         stake = f"{self.stake_pct * 100:.1f}% del bankroll"
         if bankroll > 0:
             stake += f" (≈ {currency}{bankroll * self.stake_pct:,.2f})"
+        floor = ""
+        if self.min_odds > 0:
+            floor = (
+                f"EN TU CASA: apuesta solo si paga {self.min_odds:.2f} o más en el mismo mercado y "
+                f"con el mismo marcador (equilibrio {1 / self.p_final:.2f}); si paga menos, descarta.\n"
+            )
         return (
             f"SEÑAL EN VIVO — {self.league}\n"
             f"{self.home} {self.home_goals}-{self.away_goals} {self.away} · min {self.minute}'\n"
             f"Apuesta: {self.label()} @ {self.odds:.2f}"
-            f"{' (' + self.bookmaker + ')' if self.bookmaker else ''}\n"
+            f"{' (ref. ' + self.bookmaker + ')' if self.bookmaker else ''}\n"
+            f"{floor}"
             f"Prob. modelo {self.p_model:.1%} · mercado {self.p_market:.1%} · "
             f"combinada {self.p_final:.1%}\n"
-            f"Valor esperado {self.ev:+.1%} · stake sugerido {stake}\n"
+            f"Valor esperado {self.ev:+.1%} (a la cuota de referencia) · stake sugerido {stake}\n"
             f"Goles esperados restantes: {self.lam_home + self.lam_away:.2f} "
             f"(local {self.lam_home:.2f} / visita {self.lam_away:.2f})"
         )
@@ -150,6 +158,7 @@ def find_signals(
                 p_model=p_model, p_market=p_market, p_final=p_final, ev=ev,
                 stake_pct=kelly_stake(p_final, q.odds, cfg.kelly_fraction, cfg.max_stake_pct),
                 lam_home=probs.lam_home, lam_away=probs.lam_away,
+                min_odds=(1 + cfg.min_ev) / p_final,
             ))
     out.sort(key=lambda s: s.ev, reverse=True)
     return out
