@@ -1,6 +1,7 @@
 """Convierte probabilidades del modelo + cuotas en vivo en señales con valor esperado."""
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 
@@ -63,15 +64,21 @@ class Signal:
         who = {HOME: self.home, AWAY: self.away, NONE: "Ninguno"}[self.selection]
         return f"Próximo gol: {who}"
 
-    def describe(self, bankroll: float = 0.0, currency: str = "") -> str:
+    @property
+    def min_odds_display(self) -> float:
+        """Cuota mínima redondeada hacia arriba a 2 decimales: «paga X o más» nunca debe quedar por debajo."""
+        return math.ceil(self.min_odds * 100 - 1e-9) / 100
+
+    def describe(self, bankroll: float = 0.0, currency: str = "", house: str = "") -> str:
         stake = f"{self.stake_pct * 100:.1f}% del bankroll"
         if bankroll > 0:
             stake += f" (≈ {currency}{bankroll * self.stake_pct:,.2f})"
         floor = ""
         if self.min_odds > 0:
             floor = (
-                f"EN TU CASA: apuesta solo si paga {self.min_odds:.2f} o más en el mismo mercado y "
-                f"con el mismo marcador (equilibrio {1 / self.p_final:.2f}); si paga menos, descarta.\n"
+                f"EN {house.upper() if house else 'TU CASA'}: apuesta solo si paga "
+                f"{self.min_odds_display:.2f} o más en el mismo mercado y con el mismo marcador "
+                f"(equilibrio {1 / self.p_final:.2f}); si paga menos, descarta.\n"
             )
         return (
             f"SEÑAL EN VIVO — {self.league}\n"

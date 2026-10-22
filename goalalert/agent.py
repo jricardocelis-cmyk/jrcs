@@ -60,7 +60,7 @@ class Agent:
             if confirmed is None:
                 continue
             self.store.add(confirmed, now)
-            text = confirmed.describe(acfg.bankroll, acfg.currency)
+            text = confirmed.describe(acfg.bankroll, acfg.currency, acfg.my_bookmaker)
             send_all(self.notifiers, text, f"Alerta gol: {confirmed.label()}")
             sent.append(confirmed)
         return sent

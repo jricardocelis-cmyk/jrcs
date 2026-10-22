@@ -30,6 +30,7 @@ class AgentConfig:
     require_stats: bool = True  # sin tiros/xG el modelo solo tiene el prior: no alertar
     bankroll: float = 0.0
     currency: str = ""
+    my_bookmaker: str = ""  # casa donde apuestas: aparece en la línea de cuota mínima de cada alerta
 
 
 @dataclass(frozen=True)

@@ -98,4 +98,14 @@ def test_signal_text_mentions_pick_and_odds():
     s = find_signals(match(), ou(0.5, 1.50, 2.90), PROBS, ValueConfig(), NOW)[0]
     text = s.describe(bankroll=1000, currency="S/ ")
     assert "Más de 0.5 goles @ 1.50" in text and "S/ " in text
-    assert f"EN TU CASA: apuesta solo si paga {s.min_odds:.2f} o más" in text
+    assert f"EN TU CASA: apuesta solo si paga {s.min_odds_display:.2f} o más" in text
+    named = s.describe(house="Te Apuesto")
+    assert "EN TE APUESTO: apuesta solo si paga" in named and "TU CASA" not in named
+
+
+def test_min_odds_display_rounds_up_never_below_the_real_floor():
+    s = find_signals(match(), ou(0.5, 1.50, 2.90), PROBS, ValueConfig(), NOW)[0]
+    from dataclasses import replace
+    for raw, shown in ((1.741, 1.75), (1.75, 1.75), (1.7501, 1.76), (1.50, 1.50)):
+        assert replace(s, min_odds=raw).min_odds_display == pytest.approx(shown)
+    assert s.min_odds_display >= s.min_odds and s.min_odds_display - s.min_odds < 0.01

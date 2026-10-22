@@ -85,6 +85,12 @@ def test_realert_needs_cooldown_and_better_ev():
     assert len(agent.cycle()) == 1  # enfrió y el EV subió
 
 
+def test_alert_names_the_users_bookmaker():
+    agent, out, _ = make_agent(FakeProvider(), my_bookmaker="Te Apuesto")
+    agent.cycle()
+    assert "EN TE APUESTO: apuesta solo si paga" in out.messages[0][1]
+
+
 def test_goal_between_reads_blocks_alert():
     prov = FakeProvider()
     prov.refresh_goal = True

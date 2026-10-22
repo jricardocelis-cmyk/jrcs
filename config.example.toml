@@ -12,6 +12,7 @@ confirm_odds_tolerance = 0.03  # si la cuota re-consultada cae más de 3%, no se
 require_stats = true         # sin tiros/xG el modelo solo tiene el prior: no alerta
 bankroll = 0                 # en tu moneda; 0 = solo muestra el % sugerido
 currency = "S/ "
+my_bookmaker = "Te Apuesto" # la alerta dice «EN TE APUESTO: apuesta solo si paga X o más»
 
 [provider]
 name = "api-football"        # "sim" para probar sin API key
