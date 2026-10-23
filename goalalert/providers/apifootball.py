@@ -13,7 +13,7 @@ import time
 from collections import Counter
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -142,19 +142,25 @@ class ApiFootball:
             return None
         return parse_result(items[0])
 
-    def upcoming(self, league_id: int, n: int = 5) -> list[dict]:
-        """Próximos n partidos de una liga, con la hora de Lima."""
+    def upcoming(self, league_id: int, days: int = 3) -> list[dict]:
+        """Partidos de una liga hoy y los próximos días, con la hora de Lima.
+
+        Se consulta por fecha porque el parámetro `next` no existe en el plan gratuito. Lima es UTC-5 todo el año.
+        """
+        today = datetime.now(timezone(timedelta(hours=-5))).date()
         out = []
-        for it in self._get("fixtures", league=league_id, next=n, timezone="America/Lima"):
-            fx, teams = it.get("fixture") or {}, it.get("teams") or {}
-            out.append({
-                "when": (fx.get("date") or "")[:16].replace("T", " "),
-                "status": (fx.get("status") or {}).get("short") or "",
-                "home": (teams.get("home") or {}).get("name", "?"),
-                "away": (teams.get("away") or {}).get("name", "?"),
-                "league": (it.get("league") or {}).get("name", ""),
-            })
-        return out
+        for offset in range(days):
+            day = (today + timedelta(days=offset)).isoformat()
+            for it in self._get("fixtures", league=league_id, date=day, timezone="America/Lima"):
+                fx, teams = it.get("fixture") or {}, it.get("teams") or {}
+                out.append({
+                    "when": (fx.get("date") or "")[:16].replace("T", " "),
+                    "status": (fx.get("status") or {}).get("short") or "",
+                    "home": (teams.get("home") or {}).get("name", "?"),
+                    "away": (teams.get("away") or {}).get("name", "?"),
+                    "league": (it.get("league") or {}).get("name", ""),
+                })
+        return sorted(out, key=lambda g: g["when"])
 
     def coverage(self, league_id: int) -> dict | None:
         """Cobertura declarada de la liga en su temporada actual (estadísticas, eventos, cuotas)."""

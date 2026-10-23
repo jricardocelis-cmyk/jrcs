@@ -184,11 +184,20 @@ def test_get_reads_the_server_date_header_and_computes_the_skew(monkeypatch):
     assert api.clock_skew_s == pytest.approx(62.0) and api.remaining_requests == 90
 
 
-def test_upcoming_lists_next_fixtures_in_lima_time(monkeypatch):
-    payload = [{"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
-                "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}]
-    seen = {}
-    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: seen.update(path=path, **p) or payload)
+def test_upcoming_queries_one_day_at_a_time_without_the_next_parameter(monkeypatch):
+    """El plan gratuito rechaza `next`: se consulta por fecha, hoy y los días siguientes, en hora de Lima."""
+    import re
+    calls = []
+
+    def fake_get(self, path, **params):
+        calls.append((path, params))
+        day = params["date"]
+        return [{"fixture": {"date": f"{day}T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
+                 "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}]
+
+    monkeypatch.setattr(ApiFootball, "_get", fake_get)
     games = ApiFootball("k").upcoming(281, 3)
-    assert seen == {"path": "fixtures", "league": 281, "next": 3, "timezone": "America/Lima"}
-    assert games == [{"when": "2026-10-24 15:30", "status": "NS", "home": "Alianza Lima", "away": "Sporting Cristal", "league": "Primera División"}]
+    assert len(calls) == 3 and all(path == "fixtures" and "next" not in p for path, p in calls)
+    assert all(p["league"] == 281 and p["timezone"] == "America/Lima" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", p["date"]) for _, p in calls)
+    assert [p["date"] for _, p in calls] == sorted(p["date"] for _, p in calls) and len({p["date"] for _, p in calls}) == 3
+    assert games[0]["home"] == "Alianza Lima" and games[0]["when"].endswith("15:30") and [g["when"] for g in games] == sorted(g["when"] for g in games)

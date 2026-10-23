@@ -21,7 +21,7 @@ El proveedor incluido es [API-Football](https://www.api-football.com) (marcador,
 cp config.example.toml config.toml
 export APIFOOTBALL_KEY=...
 python -m goalalert markets -c config.toml   # ligas en vivo (ids), nombres de mercado y valores crudos de tu cuenta
-python -m goalalert schedule -c config.toml --league 281   # próximos partidos de la Liga 1 (hora de Lima)
+python -m goalalert schedule -c config.toml --league 281   # partidos de hoy y próximos días (hora de Lima); puede no estar en el plan gratuito
 python -m goalalert coverage -c config.toml --league 281   # ¿la liga trae estadísticas, eventos y cuotas?
 python -m goalalert snapshot -c config.toml  # un ciclo real sin alertas: qué calcula el modelo y por qué se descarta cada apuesta
 python -m goalalert run -c config.toml

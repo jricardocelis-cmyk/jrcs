@@ -14,6 +14,7 @@ from .anchor import build_probs
 from .model import GoalModel
 from .config import Config, ConfigError, build_notifiers, build_provider, load_config
 from .notifiers import ConsoleNotifier, send_all
+from .providers import ProviderError
 from .providers.apifootball import ApiFootball
 from .providers.sim import SimProvider
 from .store import Store
@@ -192,8 +193,11 @@ def cmd_schedule(args) -> int:
         print("este comando solo aplica a api-football")
         return 1
     for lid in args.league or list(cfg.provider.leagues) or [281]:
-        games = provider.upcoming(lid, args.n)
-        print(f"liga {lid}: {games[0]['league'] if games else 'sin partidos próximos'}")
+        games = provider.upcoming(lid, args.days)
+        if not games:
+            print(f"liga {lid}: sin partidos hoy ni en los próximos {args.days - 1} días (o la API no los devolvió)")
+            continue
+        print(f"liga {lid}: {games[0]['league']}")
         for g in games:
             print(f"  {g['when']} (hora de Lima) · {g['home']} vs {g['away']} · {g['status']}")
     return 0
@@ -226,7 +230,7 @@ def main(argv: list[str] | None = None) -> int:
         if name in ("coverage", "schedule"):
             p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto 281 (Liga 1 de Perú)")
         if name == "schedule":
-            p.add_argument("--n", type=int, default=5, help="cuántos partidos próximos mostrar")
+            p.add_argument("--days", type=int, default=3, help="cuántos días mirar desde hoy (cada día es 1 request)")
         p.set_defaults(fn=fn)
     p = sub.add_parser("simulate", help="sesión simulada de punta a punta (sin API key)")
     p.add_argument("-c", "--config")
@@ -243,6 +247,14 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(f"error de configuración: {exc}", file=sys.stderr)
         return 2
+    except ProviderError as exc:
+        hint = ""
+        if "plan" in str(exc).lower():
+            hint = "\nTu plan de API-Football no incluye esta consulta: el resto de comandos no se ven afectados."
+        elif "request limit" in str(exc).lower() or "rate" in str(exc).lower():
+            hint = "\nParece que agotaste las consultas de hoy o del último minuto: espera y vuelve a intentar."
+        print(f"error de la API: {exc}{hint}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

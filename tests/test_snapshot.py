@@ -134,3 +134,25 @@ def test_snapshot_without_any_usable_market_says_why_it_skips_the_match(fake_api
     monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [bare] if path == "odds/live" else original(self, path, **p))
     main(["snapshot", "-c", str(EXAMPLE)])
     assert "sin ancla de mercado" in capsys.readouterr().out
+
+
+def test_api_errors_are_a_clear_message_not_a_traceback(fake_api, capsys, monkeypatch):
+    from goalalert.providers import ProviderError
+
+    def refuse(self, path, **params):
+        raise ProviderError("fixtures: {'plan': 'Free plans do not have access to the Next parameter.'}")
+
+    monkeypatch.setattr(ApiFootball, "_get", refuse)
+    assert main(["schedule", "-c", str(EXAMPLE)]) == 1
+    err = capsys.readouterr().err
+    assert "error de la API: fixtures: {'plan'" in err and "Tu plan de API-Football no incluye esta consulta" in err
+    assert "Traceback" not in err
+
+
+def test_schedule_prints_the_games_found(fake_api, capsys, monkeypatch):
+    item = {"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
+            "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [item] if path == "fixtures" else [])
+    assert main(["schedule", "-c", str(EXAMPLE), "--days", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "liga 281: Primera División" in out and "2026-10-24 15:30 (hora de Lima) · Alianza Lima vs Sporting Cristal · NS" in out
