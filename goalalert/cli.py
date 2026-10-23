@@ -120,7 +120,7 @@ def cmd_snapshot(args) -> int:
     for m in matches:
         quotes = odds.get(m.fixture_id, [])
         print(f"\n{m.league_name} ({m.country}) · {m.home.name} {m.home.goals}-{m.away.goals} {m.away.name}"
-              f" · {m.status} {m.elapsed}'")
+              f" · {m.status} {m.elapsed}' · id {m.fixture_id}")
         if not quotes:
             print("  sin cuotas de over/under, ambos anotan o próximo gol para este partido")
             continue
@@ -198,7 +198,7 @@ def cmd_coverage(args) -> int:
         return 1
     by_id = {x["id"]: x for x in provider.leagues_current()}
     ids = _wanted_leagues(args, cfg)
-    with_stats = 0
+    with_stats = usable = 0
     for lid in ids:
         label = POPULAR.get(lid, ("", ""))[0]
         info = by_id.get(lid)
@@ -208,11 +208,42 @@ def cmd_coverage(args) -> int:
         cov, fx = info["coverage"], info["coverage"].get("fixtures") or {}
         stats = fx.get("statistics_fixtures")
         with_stats += bool(stats)
+        usable += bool(stats) and bool(cov.get("odds"))
         warn = "" if name_matches(lid, info["name"]) else f"  ⚠ se esperaba algo como «{POPULAR[lid][1]}»: revisa el id"
         print(f"{lid:>4} · {info['name']} ({info['country']}) · temporada {info['season']} · estadísticas {stats if stats is not None else 'n/d'}"
               f" · eventos {fx.get('events', 'n/d')} · cuotas {cov.get('odds', 'n/d')}{warn}")
-    print(f"\n{with_stats} de {len(ids)} ligas declaran estadísticas por partido (tiros, xG); solo esas pueden generar alertas "
-          f"mientras require_stats = true. La cobertura es la declarada: que llegue partido a partido se comprueba con `snapshot`.")
+    print(f"\n{usable} de {len(ids)} ligas declaran estadísticas (tiros, xG) y cuotas: son las que pueden generar alertas "
+          f"({with_stats} declaran estadísticas). Una liga sin cuotas declaradas puede tener cuotas en vivo igual y viceversa: "
+          f"la cobertura es declarada y se comprueba partido a partido con `snapshot`.")
+    return 0
+
+
+def cmd_fixture(args) -> int:
+    """Prueba contra la API real las dos rutas que recorre cada alerta: reconfirmar el partido y liquidarlo al terminar."""
+    cfg = load_config(args.config)
+    provider = build_provider(cfg)
+    if not isinstance(provider, ApiFootball):
+        print("este comando solo aplica a api-football")
+        return 1
+    match, quotes = provider.refresh(args.id)
+    if match is None:
+        print(f"partido {args.id}: la API no lo devolvió")
+    else:
+        print(f"partido {args.id}: {match.home.name} {match.home.goals}-{match.away.goals} {match.away.name}"
+              f" · {match.status} {match.elapsed}' · rojas {match.home.red_cards}-{match.away.red_cards}"
+              f"{'' if match.red_known else ' (sin eventos: no verificadas)'}")
+    read = Counter(q.market.value for q in quotes)
+    print("cuotas re-consultadas (reconfirmación): " + (", ".join(f"{k}={v}" for k, v in sorted(read.items())) or
+                                                          "ninguna (partido no está en vivo, sin mercados de goles, o las cuotas son de otro marcador)"))
+    result = provider.result(args.id)
+    if result is None:
+        print("resultado: la API no devolvió el partido")
+    elif result.voided:
+        print("resultado: partido suspendido o anulado; las señales se liquidarían como anuladas")
+    elif result.finished:
+        print(f"resultado: terminó {result.home_goals}-{result.away_goals} a los 90' (con este marcador se liquidarían las señales)")
+    else:
+        print("resultado: el partido aún no termina; se liquidará cuando termine")
     return 0
 
 
@@ -234,12 +265,15 @@ def main(argv: list[str] | None = None) -> int:
         ("test-notify", cmd_test_notify, "enviar un mensaje de prueba por los canales configurados"),
         ("snapshot", cmd_snapshot, "un ciclo en vivo sin alertas: qué calcula el modelo y qué filtro descarta cada apuesta"),
         ("coverage", cmd_coverage, "cobertura declarada de una liga: estadísticas, eventos y cuotas"),
-        ("schedule", cmd_schedule, "próximos partidos de una liga (hora de Lima)"),
+        ("schedule", cmd_schedule, "partidos de hoy y próximos días de tus ligas (hora de Lima)"),
+        ("fixture", cmd_fixture, "prueba la reconfirmación y la liquidación de un partido contra la API real"),
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("-c", "--config", required=True)
         if name == "snapshot":
             p.add_argument("--no-stats", action="store_true", help="no pedir tiros/xG/tarjetas (ahorra requests)")
+        if name == "fixture":
+            p.add_argument("--id", type=int, required=True, help="id del partido (aparece en el encabezado de `snapshot`)")
         if name in ("coverage", "schedule"):
             p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto las ligas configuradas")
         if name == "schedule":

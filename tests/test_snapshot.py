@@ -65,7 +65,7 @@ def test_snapshot_shows_model_vs_market_and_the_reason_for_each_discard(fake_api
     assert "1 partidos en vivo de las 32 ligas configuradas (de 1 en vivo en total) · 1 con cuotas" in out
     assert "cuotas leídas: btts=1, next_goal=3, over_under=4" in out  # Match Goals y Corners no cuentan
     assert "tiros 2-3 · a puerta 0-1" in out
-    assert "Liga 1 (Peru) · Alianza 0-0 Cristal · 1H 30'" in out
+    assert "Liga 1 (Peru) · Alianza 0-0 Cristal · 1H 30' · id 55" in out
     alert = next(line for line in out.splitlines() if "Más de 0.5 goles" in line)
     assert "→ ALERTA" in alert and "@1.45" in alert
     assert "descartada: mercado incompleto" in out  # BTTS con una sola cuota
@@ -125,7 +125,7 @@ def test_coverage_checks_every_configured_league_against_the_account(fake_api, c
     assert any("281 · Primera División (Peru)" in l and "estadísticas False" in l for l in lines)
     assert any("140 · Copa Misteriosa" in l and "⚠ se esperaba algo como «la liga»" in l for l in lines)
     assert "no figura entre las ligas con temporada en curso" in out  # los ids populares que la cuenta no devolvió
-    assert "3 de 32 ligas declaran estadísticas" in out
+    assert "3 de 32 ligas declaran estadísticas (tiros, xG) y cuotas" in out and "(3 declaran estadísticas)" in out
 
 
 def test_coverage_accepts_explicit_leagues(fake_api, capsys, monkeypatch):
@@ -134,7 +134,7 @@ def test_coverage_accepts_explicit_leagues(fake_api, capsys, monkeypatch):
     monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
     assert main(["coverage", "-c", str(EXAMPLE), "--league", "13"]) == 0
     out = capsys.readouterr().out
-    assert "13 · CONMEBOL Libertadores (World) · temporada 2026 · estadísticas True" in out and "1 de 1 ligas" in out
+    assert "13 · CONMEBOL Libertadores (World) · temporada 2026 · estadísticas True" in out and "1 de 1 ligas declaran estadísticas (tiros, xG) y cuotas" in out
 
 
 def test_schedule_prints_the_games_of_the_configured_leagues(fake_api, capsys, monkeypatch):
@@ -189,3 +189,31 @@ def test_snapshot_flags_odds_that_lag_behind_the_score(fake_api, capsys, monkeyp
     out = capsys.readouterr().out
     assert "las cuotas son de otro marcador (1-0 en las cuotas, 0-0 en el partido)" in out
     assert "no evalúa este partido" in out and "ancla de mercado" not in out
+
+
+def test_coverage_counts_only_leagues_with_both_stats_and_odds_as_able_to_alert(fake_api, capsys, monkeypatch):
+    def entry(lid, name, stats, odds):
+        return {"league": {"id": lid, "name": name}, "country": {"name": "X"}, "seasons": [
+            {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": stats}, "odds": odds}}]}
+
+    payload = [entry(2, "UEFA Champions League", True, True), entry(1, "World Cup", True, False), entry(143, "Copa del Rey", False, False)]
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
+    main(["coverage", "-c", str(EXAMPLE), "--league", "2", "--league", "1", "--league", "143"])
+    out = capsys.readouterr().out
+    assert "1 de 3 ligas declaran estadísticas (tiros, xG) y cuotas" in out and "(2 declaran estadísticas)" in out
+
+
+def test_fixture_command_exercises_confirmation_and_settlement(fake_api, capsys, monkeypatch):
+    finished = dict(FIXTURE, fixture={"id": 55, "status": {"short": "FT", "elapsed": 90}}, goals={"home": 2, "away": 1},
+                    score={"fulltime": {"home": 2, "away": 1}})  # un partido terminado trae el mismo cuerpo, ya con el marcador final
+    served = {"fixtures": [FIXTURE], "odds/live": [ODDS]}
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: served[path])
+    assert main(["fixture", "-c", str(EXAMPLE), "--id", "55"]) == 0
+    out = capsys.readouterr().out
+    assert "partido 55: Alianza 0-0 Cristal · 1H 30' · rojas 0-0" in out
+    assert "cuotas re-consultadas (reconfirmación): btts=1, next_goal=3, over_under=4" in out
+    assert "resultado: el partido aún no termina" in out
+
+    served["fixtures"] = [finished]
+    main(["fixture", "-c", str(EXAMPLE), "--id", "55"])
+    assert "resultado: terminó 2-1 a los 90'" in capsys.readouterr().out
