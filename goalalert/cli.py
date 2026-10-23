@@ -10,6 +10,7 @@ from collections import Counter
 from dataclasses import replace
 
 from .agent import Agent
+from .anchor import build_probs
 from .model import GoalModel
 from .config import Config, ConfigError, build_notifiers, build_provider, load_config
 from .notifiers import ConsoleNotifier, send_all
@@ -49,7 +50,8 @@ def cmd_run(args) -> int:
 
 def cmd_simulate(args) -> int:
     cfg = load_config(args.config) if args.config else Config()
-    cfg = replace(cfg, agent=replace(cfg.agent, settle_check_s=0.0))
+    # El simulador no tiene equipos reales ni un mercado independiente: se usa el prior de liga para ver alertas.
+    cfg = replace(cfg, agent=replace(cfg.agent, settle_check_s=0.0), model=replace(cfg.model, prior="league"))
     provider = SimProvider(n_matches=args.matches, seed=args.seed)
     store = Store(":memory:")
     ticks = 0
@@ -108,6 +110,8 @@ def cmd_snapshot(args) -> int:
     live_ids = {m.fixture_id for m in matches}
     print(f"{len(matches)} partidos en vivo · {sum(1 for i in odds if i in live_ids)} con cuotas de mercados de goles leídas"
           f" · requests restantes hoy: {provider.remaining_requests if provider.remaining_requests is not None else 'n/d'}")
+    print(f"desfase del reloj de tu PC respecto al servidor de la API: {provider.clock_skew_s:+.0f} s"
+          f"{'  (la edad de las cuotas ya se corrige con esto)' if abs(provider.clock_skew_s) > 5 else ''}")
     # El diagnóstico muestra los números aunque la cuota sea "vieja" y reporta la edad aparte.
     diag_cfg = replace(cfg.value, max_odds_age_s=0.0)
     for m in matches:
@@ -135,8 +139,14 @@ def cmd_snapshot(args) -> int:
         gate = match_gate(m, cfg.value)
         if gate:
             print(f"  fuera de juego para alertas: {gate}")
-        probs = model.evaluate(m)
-        print(f"  goles esperados restantes: local {probs.lam_home:.2f} / visita {probs.lam_away:.2f}")
+        probs, rates = build_probs(model, m, quotes)
+        if probs is None:
+            print("  sin ancla de mercado (falta un Over/Under o un próximo gol completo): no se evalúa con prior=\"market\"")
+            continue
+        if rates is not None:
+            print(f"  ancla de mercado: local {rates.lam_home:.2f} / visita {rates.lam_away:.2f} ({rates.source})")
+        print(f"  goles esperados restantes{' tras ajustar por presión' if rates else ''}: "
+              f"local {probs.lam_home:.2f} / visita {probs.lam_away:.2f}")
         evals = evaluate_quotes(m, quotes, probs, diag_cfg, now)
         for e in sorted(evals, key=lambda e: (e.market.value, e.line or 0.0, e.selection)):
             label = selection_label(e.market, e.selection, e.line, m.home.name, m.away.name)
@@ -174,6 +184,21 @@ def cmd_coverage(args) -> int:
     return 0
 
 
+def cmd_schedule(args) -> int:
+    """Próximos partidos de una liga (hora de Lima), para saber cuándo probar en vivo."""
+    cfg = load_config(args.config)
+    provider = build_provider(cfg)
+    if not isinstance(provider, ApiFootball):
+        print("este comando solo aplica a api-football")
+        return 1
+    for lid in args.league or list(cfg.provider.leagues) or [281]:
+        games = provider.upcoming(lid, args.n)
+        print(f"liga {lid}: {games[0]['league'] if games else 'sin partidos próximos'}")
+        for g in games:
+            print(f"  {g['when']} (hora de Lima) · {g['home']} vs {g['away']} · {g['status']}")
+    return 0
+
+
 def cmd_test_notify(args) -> int:
     cfg = load_config(args.config)
     ok = send_all(build_notifiers(cfg.notify), "Prueba de goalalert: los canales funcionan.", "Prueba goalalert")
@@ -192,13 +217,16 @@ def main(argv: list[str] | None = None) -> int:
         ("test-notify", cmd_test_notify, "enviar un mensaje de prueba por los canales configurados"),
         ("snapshot", cmd_snapshot, "un ciclo en vivo sin alertas: qué calcula el modelo y qué filtro descarta cada apuesta"),
         ("coverage", cmd_coverage, "cobertura declarada de una liga: estadísticas, eventos y cuotas"),
+        ("schedule", cmd_schedule, "próximos partidos de una liga (hora de Lima)"),
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("-c", "--config", required=True)
         if name == "snapshot":
             p.add_argument("--no-stats", action="store_true", help="no pedir tiros/xG/tarjetas (ahorra requests)")
-        if name == "coverage":
+        if name in ("coverage", "schedule"):
             p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto 281 (Liga 1 de Perú)")
+        if name == "schedule":
+            p.add_argument("--n", type=int, default=5, help="cuántos partidos próximos mostrar")
         p.set_defaults(fn=fn)
     p = sub.add_parser("simulate", help="sesión simulada de punta a punta (sin API key)")
     p.add_argument("-c", "--config")

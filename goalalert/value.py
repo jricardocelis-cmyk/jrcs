@@ -25,7 +25,7 @@ class ValueConfig:
     max_minute: int = 82
     market_weight: float = 0.40  # peso del mercado (sin margen) en la probabilidad final
     max_divergence: float = 0.15  # |p_modelo - p_mercado| mayor => dato viejo o modelo roto
-    max_odds_age_s: float = 60.0  # 0 desactiva el chequeo (el reconfirmado previo a cada alerta sigue activo)
+    max_odds_age_s: float = 120.0  # 0 desactiva el chequeo (el reconfirmado previo a cada alerta sigue activo)
     kelly_fraction: float = 0.10
     max_stake_pct: float = 0.015  # tope de stake como fracción del bankroll
 

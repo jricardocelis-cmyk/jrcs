@@ -120,7 +120,7 @@ def test_evaluate_quotes_explains_every_discard():
     assert ok[(OVER, 0.5)] is None and "prob. combinada" in ok[(UNDER, 0.5)]
     assert "incompleto" in reasons(ou(0.5, 1.50, 2.90)[:1])[(OVER, 0.5)]
     assert reasons(ou(0.5, 1.50, 2.90, suspended=True))[(OVER, 0.5)] == "cuota suspendida"
-    assert reasons(ou(0.5, 1.50, 2.90, updated_at=NOW - 600))[(OVER, 0.5)] == "cuota vieja: actualizada hace 600 s (límite 60 s)"
+    assert reasons(ou(0.5, 1.50, 2.90, updated_at=NOW - 600))[(OVER, 0.5)] == "cuota vieja: actualizada hace 600 s (límite 120 s)"
     assert "divergencia" in reasons(ou(0.5, 1.90, 1.90))[(OVER, 0.5)]
     assert "no soportada" in reasons(ou(1.0, 1.50, 2.90))[(OVER, 1.0)]
     assert "fuera de" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)] or "EV" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)]

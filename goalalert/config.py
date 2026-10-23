@@ -20,6 +20,7 @@ class ConfigError(ValueError):
 @dataclass(frozen=True)
 class AgentConfig:
     poll_seconds: float = 30.0
+    idle_poll_seconds: float = 120.0  # espera cuando no hay partidos en vivo (1 request por ciclo)
     db_path: str = "goalalert.db"
     cooldown_min: float = 10.0  # mismo pick: espera mínima para volver a alertar
     realert_ev_gain: float = 0.04  # ...y solo si el EV mejoró al menos esto
@@ -81,6 +82,8 @@ def _coerce(cls, raw: dict, where: str):
             base = ModelParams().score_mult
             base.update({int(k): float(v) for k, v in kwargs["score_mult"].items()})
             kwargs["score_mult"] = base
+    if cls is ModelParams and kwargs.get("prior", "market") not in ("market", "league"):
+        raise ConfigError(f"[{where}] prior debe ser \"market\" o \"league\", no {kwargs['prior']!r}")
     try:
         return cls(**kwargs)
     except TypeError as exc:

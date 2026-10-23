@@ -6,6 +6,7 @@ import time
 from dataclasses import replace
 from typing import Callable
 
+from .anchor import build_probs
 from .config import Config
 from .model import LIVE_STATUSES, GoalModel
 from .models import LiveMatch
@@ -25,13 +26,17 @@ class Agent:
         self.model = GoalModel(cfg.model)
         self.clock, self.sleep = clock, sleep
         self._last_settle_check: dict[int, float] = {}
+        self._idle = False  # el último ciclo no encontró partidos en vivo
 
     # ---- ciclo ---------------------------------------------------------------------------
     def cycle(self) -> list[Signal]:
         now = self.clock()
         matches = self.provider.live_matches()
-        odds = self.provider.live_odds()
+        self._idle = not matches
         self._settle({m.fixture_id for m in matches}, now)
+        if not matches:
+            return []  # sin partidos en juego no se piden cuotas: cada request cuenta contra la cuota diaria
+        odds = self.provider.live_odds()
 
         vcfg, acfg = self.cfg.value, self.cfg.agent
         candidates: list[Signal] = []
@@ -46,7 +51,9 @@ class Agent:
             m = self.provider.enrich(m)
             if acfg.require_stats and not _has_stats(m):
                 continue
-            probs = self.model.evaluate(m)
+            probs, _rates = build_probs(self.model, m, quotes)
+            if probs is None:
+                continue  # prior="market" y no hay Over/Under ni próximo gol completos para anclar
             candidates += [s for s in find_signals(m, quotes, probs, vcfg, now) if self._is_new(s, now)]
 
         candidates.sort(key=lambda s: s.ev, reverse=True)
@@ -77,7 +84,7 @@ class Agent:
             except Exception:  # noqa: BLE001 - el servicio en vivo no debe morir por un ciclo malo
                 backoff = min(max(backoff * 2, 15.0), 300.0)
                 log.exception("error inesperado en el ciclo")
-            self.sleep(self.cfg.agent.poll_seconds + backoff)
+            self.sleep((self.cfg.agent.idle_poll_seconds if self._idle else self.cfg.agent.poll_seconds) + backoff)
 
     # ---- piezas --------------------------------------------------------------------------
     def _is_new(self, sig: Signal, now: float) -> bool:

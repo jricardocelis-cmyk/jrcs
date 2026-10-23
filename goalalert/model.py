@@ -75,6 +75,8 @@ class ModelParams:
     pressure_max: float = 1.60
     xg_per_sot: float = 0.24
     xg_per_other_shot: float = 0.03
+    # "market": parte de los goles esperados implícitos en las cuotas (conoce a los equipos); "league": prior de liga
+    prior: str = "market"
 
     def priors_for(self, league_id: int) -> tuple[float, float]:
         return self.league_priors.get(str(league_id), (self.home_xg, self.away_xg))
@@ -130,12 +132,12 @@ class GoalModel:
         other = max((t.shots if t.shots is not None else sot) - sot, 0)
         return self.params.xg_per_sot * sot + self.params.xg_per_other_shot * other
 
-    def _pressure(self, t: TeamLive, base: float, done: float) -> float:
+    def _pressure(self, t: TeamLive, expected_so_far: float) -> float:
         p = self.params
         obs = self._observed_xg(t)
         if obs is None:
             return 1.0
-        ratio = (p.pressure_k0 + obs) / (p.pressure_k0 + base * done)
+        ratio = (p.pressure_k0 + obs) / (p.pressure_k0 + expected_so_far)
         return min(max(ratio, p.pressure_min), p.pressure_max)
 
     def _score_mult(self, diff: int) -> float:
@@ -146,20 +148,29 @@ class GoalModel:
         p = self.params
         return (p.red_own ** min(own, 2)) * (p.red_opp ** min(opp, 2))
 
-    def evaluate(self, m: LiveMatch) -> MatchProbs:
-        base_h, base_a = self.params.priors_for(m.league_id)
+    def evaluate(self, m: LiveMatch, anchor: tuple[float, float] | None = None) -> MatchProbs:
+        """`anchor` = goles restantes que el mercado espera (local, visita). Con ancla, el mercado ya pone precio a
+        equipos, marcador y tarjetas: solo se ajusta por presión observada."""
         rem = remaining_fraction(m.status, m.elapsed)
         done = 1 - rem
+        if anchor is not None:
+            so_far = done / rem if rem > 0 else 0.0  # goles ya esperados hasta ahora, a la misma tasa que la restante
+            return MatchProbs(
+                m.home.goals, m.away.goals,
+                anchor[0] * self._pressure(m.home, anchor[0] * so_far),
+                anchor[1] * self._pressure(m.away, anchor[1] * so_far),
+            )
+        base_h, base_a = self.params.priors_for(m.league_id)
         lam_h = (
             base_h * rem
             * self._score_mult(m.home.goals - m.away.goals)
             * self._red_mult(m.home.red_cards, m.away.red_cards)
-            * self._pressure(m.home, base_h, done)
+            * self._pressure(m.home, base_h * done)
         )
         lam_a = (
             base_a * rem
             * self._score_mult(m.away.goals - m.home.goals)
             * self._red_mult(m.away.red_cards, m.home.red_cards)
-            * self._pressure(m.away, base_a, done)
+            * self._pressure(m.away, base_a * done)
         )
         return MatchProbs(m.home.goals, m.away.goals, lam_h, lam_a)

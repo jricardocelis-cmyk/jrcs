@@ -1,5 +1,8 @@
 """Parsers de API-Football contra payloads con la forma documentada (no contra respuestas reales)."""
 from goalalert.models import AWAY, HOME, NONE, NO, OVER, UNDER, YES, Market
+import pytest
+
+from goalalert.providers.apifootball import ApiFootball
 from goalalert.providers.apifootball import (
     DEFAULT_BET_NAMES, _apply_extra, _reverse_bet_names, count_red_cards, parse_live_fixture,
     parse_live_odds, parse_result, parse_statistics,
@@ -152,3 +155,40 @@ def test_timestamps_without_zone_are_utc_not_local_time():
     assert _iso_to_epoch("2026-10-23T01:00:00Z") == utc
     assert _iso_to_epoch("2026-10-22T20:00:00-05:00") == utc
     assert _iso_to_epoch("basura") is None and _iso_to_epoch(None) is None
+
+
+def test_quote_age_is_measured_against_the_server_clock_not_the_pc_clock():
+    item = odds_item(update="2026-10-23T00:35:00+00:00")
+    base = parse_live_odds(item, NAMES)[0].updated_at
+    # el PC va 65 s adelantado respecto al servidor: updated_at pasa al reloj del PC sumando ese desfase
+    assert parse_live_odds(item, NAMES, clock_skew=65.0)[0].updated_at == pytest.approx(base + 65.0)
+
+
+def test_get_reads_the_server_date_header_and_computes_the_skew(monkeypatch):
+    import io
+    from email.utils import format_datetime
+    from datetime import datetime, timezone
+    from goalalert.providers import apifootball as mod
+
+    server = datetime(2026, 10, 23, 0, 36, 10, tzinfo=timezone.utc)
+
+    class Resp(io.BytesIO):
+        headers = {"Date": format_datetime(server, usegmt=True), "x-ratelimit-requests-remaining": "90"}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    monkeypatch.setattr(mod, "urlopen", lambda req, timeout=None: Resp(b'{"errors": [], "response": [1]}'))
+    monkeypatch.setattr(mod.time, "time", lambda: server.timestamp() + 62.0)  # el PC va 62 s adelantado
+    api = ApiFootball("k")
+    assert api._get("status") == [1]
+    assert api.clock_skew_s == pytest.approx(62.0) and api.remaining_requests == 90
+
+
+def test_upcoming_lists_next_fixtures_in_lima_time(monkeypatch):
+    payload = [{"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
+                "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}]
+    seen = {}
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: seen.update(path=path, **p) or payload)
+    games = ApiFootball("k").upcoming(281, 3)
+    assert seen == {"path": "fixtures", "league": 281, "next": 3, "timezone": "America/Lima"}
+    assert games == [{"when": "2026-10-24 15:30", "status": "NS", "home": "Alianza Lima", "away": "Sporting Cristal", "league": "Primera División"}]

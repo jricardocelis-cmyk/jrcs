@@ -59,3 +59,10 @@ def test_secrets_come_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "t")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "1")
     assert len(build_notifiers(cfg.notify)) == 2  # consola + telegram
+
+
+def test_prior_must_be_market_or_league(tmp_path):
+    assert load_config(EXAMPLE).model.prior == "market"
+    assert load_config(write(tmp_path, '[model]\nprior = "league"\n')).model.prior == "league"
+    with pytest.raises(ConfigError, match="prior"):
+        load_config(write(tmp_path, '[model]\nprior = "mercado"\n'))

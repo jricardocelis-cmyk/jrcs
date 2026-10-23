@@ -15,12 +15,13 @@ python -m pytest -q
 
 ## Datos reales
 
-El proveedor incluido es [API-Football](https://www.api-football.com) (marcador, eventos, estadísticas y cuotas en vivo en un solo servicio). El plan gratuito (100 requests/día) no alcanza para sondeo continuo; con un plan de pago, `poll_seconds = 30` y unas pocas ligas el consumo es manejable. El agente lee el contador `x-ratelimit-requests-remaining` y deja de pedir estadísticas extra cuando quedan menos de 50.
+El proveedor incluido es [API-Football](https://www.api-football.com) (marcador, eventos, estadísticas y cuotas en vivo en un solo servicio). El plan gratuito (100 requests/día) no alcanza para sondeo continuo; con un plan de pago, `poll_seconds = 30` y unas pocas ligas el consumo es manejable. El agente lee el contador `x-ratelimit-requests-remaining` y deja de pedir estadísticas extra cuando quedan menos de 50. Sin partidos en vivo consulta una sola vez cada `idle_poll_seconds` (120 por defecto) y no pide cuotas; con partidos, cada `poll_seconds`. La edad de las cuotas se mide contra el reloj del servidor de la API (cabecera `Date`), no contra el de tu PC.
 
 ```bash
 cp config.example.toml config.toml
 export APIFOOTBALL_KEY=...
 python -m goalalert markets -c config.toml   # ligas en vivo (ids), nombres de mercado y valores crudos de tu cuenta
+python -m goalalert schedule -c config.toml --league 281   # próximos partidos de la Liga 1 (hora de Lima)
 python -m goalalert coverage -c config.toml --league 281   # ¿la liga trae estadísticas, eventos y cuotas?
 python -m goalalert snapshot -c config.toml  # un ciclo real sin alertas: qué calcula el modelo y por qué se descarta cada apuesta
 python -m goalalert run -c config.toml
@@ -45,6 +46,8 @@ Cada alerta incluye una línea «EN TU CASA» (con `my_bookmaker = "Te Apuesto"`
 El agente necesita estar encendido durante los partidos: una laptop, un VPS pequeño o una Raspberry con `systemd` o `tmux`. Un contenedor efímero en la nube no sirve para esto.
 
 ## Cómo decide
+
+Con `prior = "market"` (el valor por defecto) el modelo no parte de un promedio de liga, sino de los goles restantes que implican las cuotas en vivo: del Over/Under más equilibrado se despeja el total esperado y del mercado de próximo gol el reparto entre local y visita. Así conoce a los equipos: en un Flamengo–Estudiantes real el mercado daba 62% al próximo gol de Flamengo y el prior de liga solo 51%, y esa diferencia no era una oportunidad sino ignorancia del modelo. Desde esa base solo se mueve por la presión observada en tiros y xG, de modo que una alerta significa «el partido se juega distinto a como lo cotiza el mercado». Dos consecuencias: las alertas serán poco frecuentes, y solo salen en partidos con estadísticas. El mercado también ve el xG, así que esta ventaja existe únicamente si lo incorpora con retraso; `report` dirá con datos propios si es el caso. Con `prior = "league"` se vuelve al modelo anterior, que sí ajusta por marcador y tarjetas y sirve para comparar. El resto de este apartado describe ese modelo base.
 
 Para cada partido en juego entre los minutos 20 y 82, el modelo estima los goles restantes de cada equipo como `base × fracción de tiempo restante × estado del marcador × tarjetas rojas × presión`. La presión compara el xG observado (o uno aproximado con tiros y tiros al arco) con el esperado hasta ese minuto, encogido hacia 1 con `pressure_k0`, de modo que poca evidencia mueve poco la estimación. Con esas tasas, las probabilidades de cada mercado salen de distribuciones de Poisson: la suma de los goles restantes de ambos equipos para Over/Under, el producto de que cada equipo anote al menos una vez para ambos anotan, y la razón entre tasas para el próximo gol.
 

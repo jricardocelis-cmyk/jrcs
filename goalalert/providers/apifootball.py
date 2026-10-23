@@ -11,6 +11,7 @@ import logging
 import re
 import time
 from collections import Counter
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
@@ -60,6 +61,7 @@ class ApiFootball:
     remaining_requests: int | None = None
     _stats_cache: dict = field(default_factory=dict)
     _enriched_this_cycle: int = 0
+    clock_skew_s: float = 0.0  # reloj local menos reloj del servidor, de la última respuesta (cabecera Date)
     odds_meta: dict = field(default_factory=dict)  # fixture_id -> {'update': texto crudo, 'status': ...}
 
     # ---- HTTP -------------------------------------------------------------------------
@@ -71,6 +73,12 @@ class ApiFootball:
                 remaining = resp.headers.get("x-ratelimit-requests-remaining")
                 if remaining is not None and remaining.isdigit():
                     self.remaining_requests = int(remaining)
+                server_date = resp.headers.get("Date")
+                if server_date:
+                    try:
+                        self.clock_skew_s = time.time() - parsedate_to_datetime(server_date).timestamp()
+                    except (TypeError, ValueError):
+                        pass
                 data = json.load(resp)
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise ProviderError(f"{path}: {exc}") from exc
@@ -95,7 +103,7 @@ class ApiFootball:
         out: dict[int, list[Quote]] = {}
         for item in self._get("odds/live"):
             self.odds_meta[item["fixture"]["id"]] = {"update": item.get("update"), "status": item.get("status")}
-            quotes = parse_live_odds(item, names)
+            quotes = parse_live_odds(item, names, self.clock_skew_s)
             if quotes:
                 out.setdefault(quotes[0].fixture_id, []).extend(quotes)
         return out
@@ -125,7 +133,7 @@ class ApiFootball:
         names = _reverse_bet_names(self.bet_names)
         quotes: list[Quote] = []
         for item in self._get("odds/live", fixture=fixture_id):
-            quotes.extend(parse_live_odds(item, names))
+            quotes.extend(parse_live_odds(item, names, self.clock_skew_s))
         return match, quotes
 
     def result(self, fixture_id: int) -> FinalResult | None:
@@ -133,6 +141,20 @@ class ApiFootball:
         if not items:
             return None
         return parse_result(items[0])
+
+    def upcoming(self, league_id: int, n: int = 5) -> list[dict]:
+        """Próximos n partidos de una liga, con la hora de Lima."""
+        out = []
+        for it in self._get("fixtures", league=league_id, next=n, timezone="America/Lima"):
+            fx, teams = it.get("fixture") or {}, it.get("teams") or {}
+            out.append({
+                "when": (fx.get("date") or "")[:16].replace("T", " "),
+                "status": (fx.get("status") or {}).get("short") or "",
+                "home": (teams.get("home") or {}).get("name", "?"),
+                "away": (teams.get("away") or {}).get("name", "?"),
+                "league": (it.get("league") or {}).get("name", ""),
+            })
+        return out
 
     def coverage(self, league_id: int) -> dict | None:
         """Cobertura declarada de la liga en su temporada actual (estadísticas, eventos, cuotas)."""
@@ -283,13 +305,16 @@ def _parse_line(handicap, value: str) -> float | None:
     return None
 
 
-def parse_live_odds(item: dict, bet_names: dict[str, Market]) -> list[Quote]:
+def parse_live_odds(item: dict, bet_names: dict[str, Market], clock_skew: float = 0.0) -> list[Quote]:
+    """`clock_skew` (reloj local − servidor) lleva `updated_at` al reloj local: la edad no depende de que tu PC esté en hora."""
     fixture_id = item["fixture"]["id"]
     st = item.get("status") or {}
     halted = bool(st.get("stopped") or st.get("blocked") or st.get("finished"))
     teams = item.get("teams") or {}
     total_goals = int((teams.get("home") or {}).get("goals") or 0) + int((teams.get("away") or {}).get("goals") or 0)
     updated = _iso_to_epoch(item.get("update"))
+    if updated is not None:
+        updated += clock_skew
 
     quotes: list[Quote] = []
     for bet in item.get("odds") or []:

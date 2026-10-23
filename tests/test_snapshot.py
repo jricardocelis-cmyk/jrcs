@@ -38,6 +38,13 @@ ODDS = {
 
 
 @pytest.fixture
+def league_cfg(tmp_path):
+    p = tmp_path / "league.toml"
+    p.write_text('[model]\nprior = "league"\n')
+    return str(p)
+
+
+@pytest.fixture
 def fake_api(monkeypatch):
     monkeypatch.setenv("APIFOOTBALL_KEY", "clave-de-prueba")
 
@@ -52,8 +59,8 @@ def fake_api(monkeypatch):
     monkeypatch.setattr(ApiFootball, "_get", fake_get)
 
 
-def test_snapshot_shows_model_vs_market_and_the_reason_for_each_discard(fake_api, capsys):
-    assert main(["snapshot", "-c", str(EXAMPLE)]) == 0
+def test_snapshot_shows_model_vs_market_and_the_reason_for_each_discard(fake_api, capsys, league_cfg):
+    assert main(["snapshot", "-c", league_cfg]) == 0
     out = capsys.readouterr().out
     assert "1 partidos en vivo · 1 con cuotas" in out
     assert "cuotas leídas: btts=1, next_goal=3, over_under=4" in out  # Match Goals y Corners no cuentan
@@ -90,14 +97,14 @@ def test_markets_lists_leagues_mapping_and_raw_samples(fake_api, capsys):
     assert "Corners Over/Under" not in out.split("Muestra de valores crudos")[1]
 
 
-def test_snapshot_shows_numbers_and_the_age_of_stale_quotes_instead_of_hiding_them(fake_api, capsys, monkeypatch):
+def test_snapshot_shows_numbers_and_the_age_of_stale_quotes_instead_of_hiding_them(fake_api, capsys, monkeypatch, league_cfg):
     stale = dict(ODDS, update="2020-01-01T00:00:00+00:00")
     original = ApiFootball._get
     monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [stale] if path == "odds/live" else original(self, path, **p))
-    main(["snapshot", "-c", str(EXAMPLE)])
+    main(["snapshot", "-c", league_cfg])
     out = capsys.readouterr().out
     assert "campo update de la API): 2020-01-01T00:00:00+00:00" in out
-    assert "el agente las descartaría (límite 60 s)" in out
+    assert "el agente las descartaría (límite 120 s)" in out
     assert "modelo 82% · mercado 68%" in out  # los números se ven aunque el agente real descartaría la cuota
 
 
@@ -110,3 +117,20 @@ def test_coverage_prints_what_the_league_declares(fake_api, capsys, monkeypatch)
     out = capsys.readouterr().out
     assert "liga 281: Liga 1 (Peru) · temporada 2026" in out
     assert "estadísticas por partido (tiros, xG): False" in out and "eventos (goles, tarjetas):            True" in out
+
+
+def test_snapshot_with_market_prior_shows_the_anchor_and_stays_close_to_the_market(fake_api, capsys):
+    assert main(["snapshot", "-c", str(EXAMPLE)]) == 0
+    out = capsys.readouterr().out
+    assert "ancla de mercado: local" in out and "(total: over/under 1.5 · reparto: próximo gol)" in out
+    assert "goles esperados restantes tras ajustar por presión" in out
+    assert "desfase del reloj de tu PC respecto al servidor" in out
+    assert "→ ALERTA" not in out  # sin evidencia en vivo que contradiga al mercado no hay nada que alertar
+
+
+def test_snapshot_without_any_usable_market_says_why_it_skips_the_match(fake_api, capsys, monkeypatch):
+    bare = dict(ODDS, odds=[ODDS["odds"][1]])  # solo «ambos anotan» incompleto
+    original = ApiFootball._get
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [bare] if path == "odds/live" else original(self, path, **p))
+    main(["snapshot", "-c", str(EXAMPLE)])
+    assert "sin ancla de mercado" in capsys.readouterr().out
