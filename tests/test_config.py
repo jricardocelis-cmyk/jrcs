@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from goalalert.config import ConfigError, build_notifiers, build_provider, load_config
+from goalalert.leagues import POPULAR
 from goalalert.providers.apifootball import ApiFootball
 
 EXAMPLE = Path(__file__).parent.parent / "config.example.toml"
@@ -16,7 +17,7 @@ def write(tmp_path, text):
 
 def test_example_config_loads_with_defaults():
     cfg = load_config(EXAMPLE)
-    assert cfg.provider.name == "api-football" and cfg.provider.leagues == ()
+    assert cfg.provider.name == "api-football" and cfg.provider.leagues == tuple(POPULAR)
     assert cfg.value.markets == ("over_under", "btts", "next_goal")
     assert cfg.model.score_mult[-1] == 1.10
 
@@ -66,3 +67,12 @@ def test_prior_must_be_market_or_league(tmp_path):
     assert load_config(write(tmp_path, '[model]\nprior = "league"\n')).model.prior == "league"
     with pytest.raises(ConfigError, match="prior"):
         load_config(write(tmp_path, '[model]\nprior = "mercado"\n'))
+
+
+def test_leagues_accepts_popular_extra_ids_and_everything(tmp_path):
+    ids = lambda text: load_config(write(tmp_path, text)).provider.leagues
+    assert ids('[provider]\nleagues = ["popular"]\n') == tuple(POPULAR)
+    assert ids('[provider]\nleagues = ["popular", 999, 2]\n') == tuple(POPULAR) + (999,)  # sin duplicar la Champions
+    assert ids("[provider]\nleagues = [281, 39]\n") == (281, 39)
+    assert ids("[provider]\nleagues = []\n") == ()  # vacío = todo lo que esté en vivo
+    assert load_config(None).provider.leagues == tuple(POPULAR)

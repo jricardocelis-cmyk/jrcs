@@ -2,7 +2,8 @@
 #   APIFOOTBALL_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, NTFY_TOPIC
 
 [agent]
-poll_seconds = 30            # cada cuánto consulta con partidos en vivo (cuida tu cuota diaria de requests)
+poll_seconds = 60            # cada cuánto consulta con partidos en vivo. El feed de cuotas ya llega con ~40 s de retraso,
+                             # así que consultar más seguido no da datos más frescos y gasta tu cuota diaria
 idle_poll_seconds = 120      # sin partidos en vivo consulta solo 1 request cada tanto y no pide cuotas
 db_path = "goalalert.db"     # historial de señales para `goalalert report`
 cooldown_min = 10            # mismo pick: espera mínima para volver a alertar...
@@ -17,9 +18,11 @@ my_bookmaker = "Te Apuesto" # la alerta dice «EN TE APUESTO: apuesta solo si pa
 
 [provider]
 name = "api-football"        # "sim" para probar sin API key
-# Vacío = todas las ligas con partidos en vivo. Ejecuta `goalalert markets -c config.toml`
-# para ver los ids reales de tu cuenta (Liga 1 Perú, Libertadores, ligas europeas, etc.).
-leagues = []
+# Competiciones a vigilar. "popular" = las que más ofrecen las casas de apuestas (Champions, Europa League, las
+# grandes ligas europeas, Libertadores, Sudamericana, Brasileirao, Liga Argentina, Liga MX, MLS, selecciones y copas
+# nacionales; la Liga 1 de Peru es una mas). Puedes agregar ids: ["popular", 999], dejar solo los tuyos, o poner []
+# para vigilar todo lo que este en vivo. `goalalert coverage` verifica los ids contra tu cuenta.
+leagues = ["popular"]
 stats_ttl_s = 120            # cada cuánto refresca tiros/xG por partido
 max_enrich_per_cycle = 15
 

@@ -61,6 +61,7 @@ class ApiFootball:
     remaining_requests: int | None = None
     _stats_cache: dict = field(default_factory=dict)
     _enriched_this_cycle: int = 0
+    last_live_total: int = 0  # partidos en vivo en TODAS las ligas, antes de filtrar
     clock_skew_s: float = 0.0  # reloj local menos reloj del servidor, de la última respuesta (cabecera Date)
     odds_meta: dict = field(default_factory=dict)  # fixture_id -> {'update': texto crudo, 'status': ...}
 
@@ -94,6 +95,7 @@ class ApiFootball:
     def live_matches(self) -> list[LiveMatch]:
         self._enriched_this_cycle = 0
         matches = [parse_live_fixture(it) for it in self._get("fixtures", live="all")]
+        self.last_live_total = len(matches)
         if self.league_ids:
             matches = [m for m in matches if m.league_id in self.league_ids]
         return matches
@@ -146,36 +148,38 @@ class ApiFootball:
             return None
         return parse_result(items[0])
 
-    def upcoming(self, league_id: int, days: int = 3) -> list[dict]:
-        """Partidos de una liga hoy y los próximos días, con la hora de Lima.
+    def upcoming(self, league_ids: set[int] | None = None, days: int = 3) -> list[dict]:
+        """Partidos de hoy y los próximos días con la hora de Lima (UTC-5 todo el año).
 
-        Se consulta por fecha porque el parámetro `next` no existe en el plan gratuito. Lima es UTC-5 todo el año.
+        Una consulta por día para TODAS las ligas, filtradas aquí: el parámetro `next` no existe en el plan gratuito.
         """
         today = datetime.now(timezone(timedelta(hours=-5))).date()
         out = []
         for offset in range(days):
             day = (today + timedelta(days=offset)).isoformat()
-            for it in self._get("fixtures", league=league_id, date=day, timezone="America/Lima"):
-                fx, teams = it.get("fixture") or {}, it.get("teams") or {}
+            for it in self._get("fixtures", date=day, timezone="America/Lima"):
+                league, fx, teams = it.get("league") or {}, it.get("fixture") or {}, it.get("teams") or {}
+                if league_ids and league.get("id") not in league_ids:
+                    continue
                 out.append({
                     "when": (fx.get("date") or "")[:16].replace("T", " "),
                     "status": (fx.get("status") or {}).get("short") or "",
                     "home": (teams.get("home") or {}).get("name", "?"),
                     "away": (teams.get("away") or {}).get("name", "?"),
-                    "league": (it.get("league") or {}).get("name", ""),
+                    "league": league.get("name", ""),
+                    "country": league.get("country", "") or "",
                 })
         return sorted(out, key=lambda g: g["when"])
 
-    def coverage(self, league_id: int) -> dict | None:
-        """Cobertura declarada de la liga en su temporada actual (estadísticas, eventos, cuotas)."""
-        items = self._get("leagues", id=league_id, current="true")
-        if not items:
-            return None
-        league = items[0].get("league") or {}
-        seasons = items[0].get("seasons") or []
-        season = next((x for x in seasons if x.get("current")), seasons[-1] if seasons else {})
-        return {"name": league.get("name"), "country": (items[0].get("country") or {}).get("name"),
-                "season": season.get("year"), "coverage": season.get("coverage") or {}}
+    def leagues_current(self) -> list[dict]:
+        """Ligas con temporada en curso y su cobertura declarada, en UNA consulta."""
+        out = []
+        for it in self._get("leagues", current="true"):
+            league, seasons = it.get("league") or {}, it.get("seasons") or []
+            season = next((x for x in seasons if x.get("current")), seasons[-1] if seasons else {})
+            out.append({"id": league.get("id"), "name": league.get("name"), "country": (it.get("country") or {}).get("name"),
+                        "season": season.get("year"), "coverage": season.get("coverage") or {}})
+        return out
 
     def inspect(self) -> tuple[Counter, Counter, dict]:
         """Ligas en vivo, nombres de mercado y una muestra de valores crudos (para configurar y verificar el mapeo)."""

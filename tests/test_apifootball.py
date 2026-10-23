@@ -184,23 +184,49 @@ def test_get_reads_the_server_date_header_and_computes_the_skew(monkeypatch):
     assert api.clock_skew_s == pytest.approx(62.0) and api.remaining_requests == 90
 
 
-def test_upcoming_queries_one_day_at_a_time_without_the_next_parameter(monkeypatch):
-    """El plan gratuito rechaza `next`: se consulta por fecha, hoy y los días siguientes, en hora de Lima."""
+def test_upcoming_asks_for_whole_days_without_next_or_league_and_filters_locally(monkeypatch):
+    """El plan gratuito rechaza `next`: se consulta por fecha (hoy y siguientes, hora de Lima) y se filtra aquí."""
     import re
     calls = []
 
     def fake_get(self, path, **params):
         calls.append((path, params))
         day = params["date"]
-        return [{"fixture": {"date": f"{day}T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
-                 "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}]
+        game = lambda lid, name, home: {"fixture": {"date": f"{day}T15:30:00-05:00", "status": {"short": "NS"}},
+                                        "league": {"id": lid, "name": name, "country": "X"},
+                                        "teams": {"home": {"name": home}, "away": {"name": "Rival"}}}
+        return [game(281, "Primera División", "Alianza Lima"), game(999, "Liga Ajena", "Otro")]
 
     monkeypatch.setattr(ApiFootball, "_get", fake_get)
-    games = ApiFootball("k").upcoming(281, 3)
-    assert len(calls) == 3 and all(path == "fixtures" and "next" not in p for path, p in calls)
-    assert all(p["league"] == 281 and p["timezone"] == "America/Lima" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", p["date"]) for _, p in calls)
-    assert [p["date"] for _, p in calls] == sorted(p["date"] for _, p in calls) and len({p["date"] for _, p in calls}) == 3
-    assert games[0]["home"] == "Alianza Lima" and games[0]["when"].endswith("15:30") and [g["when"] for g in games] == sorted(g["when"] for g in games)
+    games = ApiFootball("k").upcoming({281}, 3)
+    assert len(calls) == 3 and all(path == "fixtures" for path, _ in calls)
+    assert all("next" not in p and "league" not in p and p["timezone"] == "America/Lima" for _, p in calls)
+    assert all(re.fullmatch(r"\d{4}-\d{2}-\d{2}", p["date"]) for _, p in calls) and len({p["date"] for _, p in calls}) == 3
+    assert [g["home"] for g in games] == ["Alianza Lima"] * 3  # la liga 999 se filtra
+    assert [g["when"] for g in games] == sorted(g["when"] for g in games)
+    assert len(ApiFootball("k").upcoming(None, 1)) == 2  # sin filtro: todas las ligas del día
+
+
+def test_league_filter_keeps_only_configured_leagues_and_reports_the_live_total(monkeypatch):
+    live = [dict(fixture_item(), league={"id": lid, "name": f"L{lid}", "country": "X"}) for lid in (281, 2, 999)]
+    for i, item in enumerate(live):
+        item["fixture"] = dict(item["fixture"], id=100 + i)
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: live)
+    api = ApiFootball("k", league_ids=(281, 2))
+    assert sorted(m.league_id for m in api.live_matches()) == [2, 281]
+    assert api.last_live_total == 3
+    everything = ApiFootball("k")
+    assert len(everything.live_matches()) == 3
+
+
+def test_leagues_current_reads_coverage_of_the_running_season(monkeypatch):
+    payload = [{"league": {"id": 281, "name": "Primera División"}, "country": {"name": "Peru"}, "seasons": [
+        {"year": 2025, "current": False, "coverage": {}},
+        {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": False}, "odds": True}}]}]
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
+    (info,) = ApiFootball("k").leagues_current()
+    assert (info["id"], info["name"], info["country"], info["season"]) == (281, "Primera División", "Peru", 2026)
+    assert info["coverage"]["fixtures"]["statistics_fixtures"] is False
 
 
 def test_live_odds_remember_the_score_the_odds_were_generated_with(monkeypatch):

@@ -6,6 +6,7 @@ import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 
+from .leagues import POPULAR, expand_leagues
 from .model import ModelParams
 from .notifiers import ConsoleNotifier, NtfyNotifier, TelegramNotifier
 from .providers.apifootball import DEFAULT_BET_NAMES, ApiFootball
@@ -19,7 +20,7 @@ class ConfigError(ValueError):
 
 @dataclass(frozen=True)
 class AgentConfig:
-    poll_seconds: float = 30.0
+    poll_seconds: float = 60.0  # el feed de cuotas ya llega con ~40 s de retraso: consultar más seguido no da datos más frescos
     idle_poll_seconds: float = 120.0  # espera cuando no hay partidos en vivo (1 request por ciclo)
     db_path: str = "goalalert.db"
     cooldown_min: float = 10.0  # mismo pick: espera mínima para volver a alertar
@@ -37,7 +38,7 @@ class AgentConfig:
 @dataclass(frozen=True)
 class ProviderConfig:
     name: str = "api-football"  # "api-football" | "sim"
-    leagues: tuple[int, ...] = ()  # vacío = todas las ligas en vivo
+    leagues: tuple[int, ...] = tuple(POPULAR)  # las que más ofrecen las casas; vacío = todo lo que esté en vivo
     stats_ttl_s: float = 120.0
     max_enrich_per_cycle: int = 15
     bet_names: dict[str, tuple[str, ...]] = field(default_factory=lambda: dict(DEFAULT_BET_NAMES))
@@ -68,7 +69,7 @@ def _coerce(cls, raw: dict, where: str):
     kwargs = dict(raw)
     if cls is ProviderConfig:
         if "leagues" in kwargs:
-            kwargs["leagues"] = tuple(int(x) for x in kwargs["leagues"])
+            kwargs["leagues"] = expand_leagues(kwargs["leagues"])
         if "bet_names" in kwargs:
             merged = dict(DEFAULT_BET_NAMES)
             merged.update({k: tuple(v) for k, v in kwargs["bet_names"].items()})

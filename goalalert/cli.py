@@ -17,6 +17,7 @@ from .notifiers import ConsoleNotifier, send_all
 from .providers import ProviderError
 from .providers.apifootball import ApiFootball
 from .providers.sim import SimProvider
+from .leagues import POPULAR, name_matches
 from .store import Store
 from .value import evaluate_quotes, match_gate, odds_state_gate, selection_label
 
@@ -109,7 +110,8 @@ def cmd_snapshot(args) -> int:
     model, now = GoalModel(cfg.model), time.time()
     matches, odds = provider.live_matches(), provider.live_odds()
     live_ids = {m.fixture_id for m in matches}
-    print(f"{len(matches)} partidos en vivo · {sum(1 for i in odds if i in live_ids)} con cuotas de mercados de goles leídas"
+    print(f"{len(matches)} partidos en vivo de las {len(cfg.provider.leagues) or 'todas las'} ligas configuradas"
+          f" (de {provider.last_live_total} en vivo en total) · {sum(1 for i in odds if i in live_ids)} con cuotas de mercados de goles leídas"
           f" · requests restantes hoy: {provider.remaining_requests if provider.remaining_requests is not None else 'n/d'}")
     print(f"desfase del reloj de tu PC respecto al servidor de la API: {provider.clock_skew_s:+.0f} s"
           f"{'  (la edad de las cuotas ya se corrige con esto)' if abs(provider.clock_skew_s) > 5 else ''}")
@@ -166,44 +168,51 @@ def cmd_snapshot(args) -> int:
     return 0
 
 
-def cmd_coverage(args) -> int:
-    """Cobertura declarada por la API para una liga: ¿hay estadísticas, eventos y cuotas?"""
-    cfg = load_config(args.config)
-    provider = build_provider(cfg)
-    if not isinstance(provider, ApiFootball):
-        print("este comando solo aplica a api-football")
-        return 1
-    ids = args.league or list(cfg.provider.leagues) or [281]
-    for lid in ids:
-        info = provider.coverage(lid)
-        if info is None:
-            print(f"liga {lid}: la API no la reconoce")
-            continue
-        cov = info["coverage"]
-        fx = cov.get("fixtures") or {}
-        print(f"liga {lid}: {info['name']} ({info['country']}) · temporada {info['season']}")
-        print(f"  estadísticas por partido (tiros, xG): {fx.get('statistics_fixtures', 'n/d')}")
-        print(f"  eventos (goles, tarjetas):            {fx.get('events', 'n/d')}")
-        print(f"  cuotas:                               {cov.get('odds', 'n/d')}  (cobertura declarada; las cuotas en vivo pueden faltar igual)")
-        print(f"  cobertura completa: {json.dumps(cov, ensure_ascii=False)}")
-    return 0
+def _wanted_leagues(args, cfg) -> list[int]:
+    return list(args.league or cfg.provider.leagues or POPULAR)
 
 
 def cmd_schedule(args) -> int:
-    """Próximos partidos de una liga (hora de Lima), para saber cuándo probar en vivo."""
+    """Partidos de hoy y los próximos días de las ligas configuradas (hora de Lima)."""
     cfg = load_config(args.config)
     provider = build_provider(cfg)
     if not isinstance(provider, ApiFootball):
         print("este comando solo aplica a api-football")
         return 1
-    for lid in args.league or list(cfg.provider.leagues) or [281]:
-        games = provider.upcoming(lid, args.days)
-        if not games:
-            print(f"liga {lid}: sin partidos hoy ni en los próximos {args.days - 1} días (o la API no los devolvió)")
+    games = provider.upcoming(set(_wanted_leagues(args, cfg)), args.days)
+    if not games:
+        print(f"sin partidos de las ligas configuradas hoy ni en los próximos {args.days - 1} días (o la API no los devolvió)")
+        return 0
+    for g in games:
+        league = f"{g['league']} ({g['country']})" if g["country"] else g["league"]
+        print(f"{g['when']} (hora de Lima) · {league} · {g['home']} vs {g['away']} · {g['status']}")
+    return 0
+
+
+def cmd_coverage(args) -> int:
+    """Verifica contra tu cuenta las ligas configuradas: nombre real, temporada en curso y cobertura declarada."""
+    cfg = load_config(args.config)
+    provider = build_provider(cfg)
+    if not isinstance(provider, ApiFootball):
+        print("este comando solo aplica a api-football")
+        return 1
+    by_id = {x["id"]: x for x in provider.leagues_current()}
+    ids = _wanted_leagues(args, cfg)
+    with_stats = 0
+    for lid in ids:
+        label = POPULAR.get(lid, ("", ""))[0]
+        info = by_id.get(lid)
+        if info is None:
+            print(f"{lid:>4} · {label or '?'}: no figura entre las ligas con temporada en curso (¿id equivocado o fuera de temporada?)")
             continue
-        print(f"liga {lid}: {games[0]['league']}")
-        for g in games:
-            print(f"  {g['when']} (hora de Lima) · {g['home']} vs {g['away']} · {g['status']}")
+        cov, fx = info["coverage"], info["coverage"].get("fixtures") or {}
+        stats = fx.get("statistics_fixtures")
+        with_stats += bool(stats)
+        warn = "" if name_matches(lid, info["name"]) else f"  ⚠ se esperaba algo como «{POPULAR[lid][1]}»: revisa el id"
+        print(f"{lid:>4} · {info['name']} ({info['country']}) · temporada {info['season']} · estadísticas {stats if stats is not None else 'n/d'}"
+              f" · eventos {fx.get('events', 'n/d')} · cuotas {cov.get('odds', 'n/d')}{warn}")
+    print(f"\n{with_stats} de {len(ids)} ligas declaran estadísticas por partido (tiros, xG); solo esas pueden generar alertas "
+          f"mientras require_stats = true. La cobertura es la declarada: que llegue partido a partido se comprueba con `snapshot`.")
     return 0
 
 
@@ -232,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
         if name == "snapshot":
             p.add_argument("--no-stats", action="store_true", help="no pedir tiros/xG/tarjetas (ahorra requests)")
         if name in ("coverage", "schedule"):
-            p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto 281 (Liga 1 de Perú)")
+            p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto las ligas configuradas")
         if name == "schedule":
             p.add_argument("--days", type=int, default=3, help="cuántos días mirar desde hoy (cada día es 1 request)")
         p.set_defaults(fn=fn)

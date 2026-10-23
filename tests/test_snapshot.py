@@ -62,7 +62,7 @@ def fake_api(monkeypatch):
 def test_snapshot_shows_model_vs_market_and_the_reason_for_each_discard(fake_api, capsys, league_cfg):
     assert main(["snapshot", "-c", league_cfg]) == 0
     out = capsys.readouterr().out
-    assert "1 partidos en vivo · 1 con cuotas" in out
+    assert "1 partidos en vivo de las 32 ligas configuradas (de 1 en vivo en total) · 1 con cuotas" in out
     assert "cuotas leídas: btts=1, next_goal=3, over_under=4" in out  # Match Goals y Corners no cuentan
     assert "tiros 2-3 · a puerta 0-1" in out
     assert "Liga 1 (Peru) · Alianza 0-0 Cristal · 1H 30'" in out
@@ -108,15 +108,47 @@ def test_snapshot_shows_numbers_and_the_age_of_stale_quotes_instead_of_hiding_th
     assert "modelo 82% · mercado 68%" in out  # los números se ven aunque el agente real descartaría la cuota
 
 
-def test_coverage_prints_what_the_league_declares(fake_api, capsys, monkeypatch):
-    payload = [{"league": {"id": 281, "name": "Liga 1"}, "country": {"name": "Peru"}, "seasons": [
-        {"year": 2025, "current": False, "coverage": {}},
-        {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": False}, "odds": True}}]}]
+def test_coverage_checks_every_configured_league_against_the_account(fake_api, capsys, monkeypatch):
+    def entry(lid, name, country, stats):
+        return {"league": {"id": lid, "name": name}, "country": {"name": country}, "seasons": [
+            {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": stats}, "odds": True}}]}
+
+    payload = [entry(2, "UEFA Champions League", "World", True),
+               entry(39, "Premier League", "England", True),
+               entry(281, "Primera División", "Peru", False),
+               entry(140, "Copa Misteriosa", "Spain", True)]  # el id 140 debería ser La Liga: la API dice otra cosa
     monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
     assert main(["coverage", "-c", str(EXAMPLE)]) == 0
     out = capsys.readouterr().out
-    assert "liga 281: Liga 1 (Peru) · temporada 2026" in out
-    assert "estadísticas por partido (tiros, xG): False" in out and "eventos (goles, tarjetas):            True" in out
+    lines = out.splitlines()
+    assert any(l.strip().startswith("2 · UEFA Champions League (World) · temporada 2026 · estadísticas True") for l in lines)
+    assert any("281 · Primera División (Peru)" in l and "estadísticas False" in l for l in lines)
+    assert any("140 · Copa Misteriosa" in l and "⚠ se esperaba algo como «la liga»" in l for l in lines)
+    assert "no figura entre las ligas con temporada en curso" in out  # los ids populares que la cuenta no devolvió
+    assert "3 de 32 ligas declaran estadísticas" in out
+
+
+def test_coverage_accepts_explicit_leagues(fake_api, capsys, monkeypatch):
+    payload = [{"league": {"id": 13, "name": "CONMEBOL Libertadores"}, "country": {"name": "World"}, "seasons": [
+        {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": True}, "odds": True}}]}]
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
+    assert main(["coverage", "-c", str(EXAMPLE), "--league", "13"]) == 0
+    out = capsys.readouterr().out
+    assert "13 · CONMEBOL Libertadores (World) · temporada 2026 · estadísticas True" in out and "1 de 1 ligas" in out
+
+
+def test_schedule_prints_the_games_of_the_configured_leagues(fake_api, capsys, monkeypatch):
+    def game(lid, name, country, home):
+        return {"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}},
+                "league": {"id": lid, "name": name, "country": country}, "teams": {"home": {"name": home}, "away": {"name": "Rival"}}}
+
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [game(2, "UEFA Champions League", "World", "Real Madrid"),
+                                                                       game(999, "Liga Ajena", "X", "Otro")])
+    assert main(["schedule", "-c", str(EXAMPLE), "--days", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "2026-10-24 15:30 (hora de Lima) · UEFA Champions League (World) · Real Madrid vs Rival · NS" in out
+    assert "Otro" not in out  # fuera de las ligas configuradas
+
 
 
 def test_snapshot_with_market_prior_shows_the_anchor_and_stays_close_to_the_market(fake_api, capsys):
@@ -147,15 +179,6 @@ def test_api_errors_are_a_clear_message_not_a_traceback(fake_api, capsys, monkey
     err = capsys.readouterr().err
     assert "error de la API: fixtures: {'plan'" in err and "Tu plan de API-Football no incluye esta consulta" in err
     assert "Traceback" not in err
-
-
-def test_schedule_prints_the_games_found(fake_api, capsys, monkeypatch):
-    item = {"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}}, "league": {"name": "Primera División"},
-            "teams": {"home": {"name": "Alianza Lima"}, "away": {"name": "Sporting Cristal"}}}
-    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [item] if path == "fixtures" else [])
-    assert main(["schedule", "-c", str(EXAMPLE), "--days", "1"]) == 0
-    out = capsys.readouterr().out
-    assert "liga 281: Primera División" in out and "2026-10-24 15:30 (hora de Lima) · Alianza Lima vs Sporting Cristal · NS" in out
 
 
 def test_snapshot_flags_odds_that_lag_behind_the_score(fake_api, capsys, monkeypatch):

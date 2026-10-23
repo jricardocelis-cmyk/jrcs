@@ -15,21 +15,21 @@ python -m pytest -q
 
 ## Datos reales
 
-El proveedor incluido es [API-Football](https://www.api-football.com) (marcador, eventos, estadísticas y cuotas en vivo en un solo servicio). El plan gratuito (100 requests/día) no alcanza para sondeo continuo; con un plan de pago, `poll_seconds = 30` y unas pocas ligas el consumo es manejable. El agente lee el contador `x-ratelimit-requests-remaining` y deja de pedir estadísticas extra cuando quedan menos de 50. Sin partidos en vivo consulta una sola vez cada `idle_poll_seconds` (120 por defecto) y no pide cuotas; con partidos, cada `poll_seconds`. La edad de las cuotas se mide contra el reloj del servidor de la API (cabecera `Date`), no contra el de tu PC.
+El proveedor incluido es [API-Football](https://www.api-football.com) (marcador, eventos, estadísticas y cuotas en vivo en un solo servicio). El plan gratuito (100 requests/día) no alcanza para sondeo continuo; con las ligas populares y unos 10 partidos en vivo a la vez el consumo ronda las 400 consultas por hora (2 por ciclo más las estadísticas de cada partido cada 2 minutos), unas 5 000 en una jornada cargada de 12 horas, así que para uso continuo necesitas un plan de pago. El agente lee el contador `x-ratelimit-requests-remaining` y deja de pedir estadísticas extra cuando quedan menos de 50. Sin partidos en vivo consulta una sola vez cada `idle_poll_seconds` (120 por defecto) y no pide cuotas; con partidos, cada `poll_seconds`. La edad de las cuotas se mide contra el reloj del servidor de la API (cabecera `Date`), no contra el de tu PC.
 
 ```bash
 cp config.example.toml config.toml
 export APIFOOTBALL_KEY=...
 python -m goalalert markets -c config.toml   # ligas en vivo (ids), nombres de mercado y valores crudos de tu cuenta
-python -m goalalert schedule -c config.toml --league 281   # partidos de hoy y próximos días (hora de Lima); puede no estar en el plan gratuito
-python -m goalalert coverage -c config.toml --league 281   # ¿la liga trae estadísticas, eventos y cuotas?
+python -m goalalert schedule -c config.toml   # partidos de hoy y próximos días de tus ligas (hora de Lima); puede no estar en el plan gratuito
+python -m goalalert coverage -c config.toml   # verifica tus ligas contra tu cuenta: nombre real, estadísticas, eventos y cuotas
 python -m goalalert snapshot -c config.toml  # un ciclo real sin alertas: qué calcula el modelo y por qué se descarta cada apuesta
 python -m goalalert run -c config.toml
 ```
 
 Con una cuenta real se confirmó la conexión, la lectura de partidos en vivo y los nombres de mercado. La lectura de las cuotas y el comportamiento del modelo sobre partidos reales se comprueban con `snapshot`, que imprime por cada partido en vivo el marcador, los tiros, los goles esperados y, para cada apuesta, la probabilidad del modelo, la del mercado y el motivo exacto por el que se descarta (o «ALERTA»). Es la herramienta para entender por qué no llegan alertas, y usa la misma lógica de filtros que el agente en vivo. «Match Goals» aparece en la lista de mercados pero no está mapeado a propósito: hasta confirmar con la muestra de valores crudos de `markets` que es un Over/Under comparable, mezclarlo podría generar señales falsas. El próximo gol se lee de «Which team will score the Nth goal?», y solo cuando N es los goles actuales más uno. Ejecuta `markets` primero: si los nombres de mercado de tu cuenta difieren, corrígelos en `[provider.bet_names]`. Una discrepancia se manifiesta como cero alertas, no como alertas erróneas, porque el agente exige mercados completos (Over y Under, Sí y No, local/visita/ninguno) antes de evaluar.
 
-Para fijar la liga local, pon su id en `leagues` (Liga 1 de Perú, Libertadores, etc.; los ids salen de `markets`). Con `leagues = []` vigila todo lo que esté en vivo.
+Por defecto vigila las competiciones que más ofrecen las casas de apuestas (`leagues = ["popular"]`): Champions, Europa League, Conference, las grandes ligas europeas, Libertadores, Sudamericana, Brasileirão, Liga Argentina, Liga MX, MLS, selecciones (Mundial, Eurocopa, Copa América, Nations League, Eliminatorias, amistosos) y copas nacionales. La Liga 1 de Perú es una más. Puedes agregar ids (`["popular", 999]`), dejar solo los tuyos o usar `[]` para vigilar todo lo que esté en vivo; la lista está en `goalalert/leagues.py`. Esos ids vienen de la documentación de la API y no se contrastaron al escribirlos, por eso `coverage` los verifica contra tu cuenta y marca con ⚠ cualquiera cuyo nombre real no coincida.
 
 ## Tu casa peruana
 
@@ -61,7 +61,7 @@ Las ligas sin cobertura de estadísticas (frecuente en torneos locales menores) 
 
 En el primer `snapshot` real con el prior de mercado (6 partidos en vivo, 5 con cuotas, unas 40 apuestas evaluadas) ninguna tuvo valor esperado positivo: la mejor quedó en −1.5% y la mayoría entre −5% y −10%. No es una falla. El mercado de referencia cobra un margen de ~5-6% por apuesta, y el modelo parte de ese mismo mercado, así que para llegar a +6% tendría que estar ~12% mejor informado que él, lo que solo ocurre cuando la presión observada (tiros, xG) contradice el precio. Por eso las alertas serán raras, y que haya semanas con pocas o ninguna es normal.
 
-Los datos tienen dos límites que conviene conocer. Las cuotas de la API llegan con ~40 s de retraso respecto al partido (sin relación con el reloj de tu PC), por lo que el agente descarta un partido cuando las cuotas son de otro marcador que el del partido (cayó un gol en ese intervalo) y reconfirma marcador y cuota justo antes de alertar. Y solo los partidos con estadísticas pueden alertar: en el primer `snapshot` real, la Libertadores traía tiros y xG y las ligas menores (Bolivia, Caribe, Venezuela, USL) no traían ninguno. La Liga 1 declara cobertura de estadísticas; si esa cobertura llega partido a partido en vivo, se comprueba con `snapshot` mientras juega.
+Los datos tienen dos límites que conviene conocer. Las cuotas de la API llegan con ~40 s de retraso respecto al partido (sin relación con el reloj de tu PC), por lo que el agente descarta un partido cuando las cuotas son de otro marcador que el del partido (cayó un gol en ese intervalo) y reconfirma marcador y cuota justo antes de alertar. Y solo los partidos con estadísticas pueden alertar: en el primer `snapshot` real, la Libertadores traía tiros y xG y las ligas menores (Bolivia, Caribe, Venezuela, USL) no traían ninguno. Las competiciones populares suelen declarar estadísticas y `coverage` muestra cuáles; que lleguen partido a partido en vivo se comprueba con `snapshot` mientras se juega.
 
 ## Calibración
 
