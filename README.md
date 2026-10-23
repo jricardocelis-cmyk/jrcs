@@ -21,6 +21,7 @@ El proveedor incluido es [API-Football](https://www.api-football.com) (marcador,
 cp config.example.toml config.toml
 export APIFOOTBALL_KEY=...
 python -m goalalert markets -c config.toml   # ligas en vivo (ids), nombres de mercado y valores crudos de tu cuenta
+python -m goalalert coverage -c config.toml --league 281   # ¿la liga trae estadísticas, eventos y cuotas?
 python -m goalalert snapshot -c config.toml  # un ciclo real sin alertas: qué calcula el modelo y por qué se descarta cada apuesta
 python -m goalalert run -c config.toml
 ```
@@ -47,7 +48,7 @@ El agente necesita estar encendido durante los partidos: una laptop, un VPS pequ
 
 Para cada partido en juego entre los minutos 20 y 82, el modelo estima los goles restantes de cada equipo como `base × fracción de tiempo restante × estado del marcador × tarjetas rojas × presión`. La presión compara el xG observado (o uno aproximado con tiros y tiros al arco) con el esperado hasta ese minuto, encogido hacia 1 con `pressure_k0`, de modo que poca evidencia mueve poco la estimación. Con esas tasas, las probabilidades de cada mercado salen de distribuciones de Poisson: la suma de los goles restantes de ambos equipos para Over/Under, el producto de que cada equipo anote al menos una vez para ambos anotan, y la razón entre tasas para el próximo gol.
 
-Cada probabilidad del modelo se mezcla con la implícita del mercado (sin margen, `market_weight = 0.4`). Es un encogimiento deliberado: el mercado en vivo es eficiente en promedio, y alertar solo con el modelo puro multiplicaría las señales falsas. Una apuesta se alerta si cumple todo lo siguiente: probabilidad combinada ≥ 60%, valor esperado ≥ 6%, cuota entre 1.40 y 4.00, mercado completo y no suspendido, cuota con menos de 60 s, y una diferencia modelo-mercado de menos de 15 puntos. Esta última guarda es la más importante: una brecha grande casi siempre indica una cuota vieja, un gol que aún no se refleja o un modelo roto, no una oportunidad.
+Cada probabilidad del modelo se mezcla con la implícita del mercado (sin margen, `market_weight = 0.4`). Es un encogimiento deliberado: el mercado en vivo es eficiente en promedio, y alertar solo con el modelo puro multiplicaría las señales falsas. Una apuesta se alerta si cumple todo lo siguiente: probabilidad combinada ≥ 55%, valor esperado ≥ 6%, cuota entre 1.40 y 4.00, mercado completo y no suspendido, cuota con menos de 60 s, y una diferencia modelo-mercado de menos de 15 puntos. Esta última guarda es la más importante: una brecha grande casi siempre indica una cuota vieja, un gol que aún no se refleja o un modelo roto, no una oportunidad.
 
 Antes de enviar, el agente vuelve a consultar marcador, tarjetas y cuota de ese partido. Si cayó un gol entre las dos lecturas, la cuota se suspendió o bajó más de 3%, no alerta. Si la cuota cambió poco, la alerta sale con la cuota vigente y el valor esperado recalculado. Además hay enfriamiento por pick, tope de señales por partido y por ciclo, y un stake sugerido con Kelly fraccional (10%) topado en 1.5% del bankroll.
 

@@ -12,7 +12,7 @@ import re
 import time
 from collections import Counter
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -60,6 +60,7 @@ class ApiFootball:
     remaining_requests: int | None = None
     _stats_cache: dict = field(default_factory=dict)
     _enriched_this_cycle: int = 0
+    odds_meta: dict = field(default_factory=dict)  # fixture_id -> {'update': texto crudo, 'status': ...}
 
     # ---- HTTP -------------------------------------------------------------------------
     def _get(self, path: str, **params) -> list:
@@ -93,6 +94,7 @@ class ApiFootball:
         names = _reverse_bet_names(self.bet_names)
         out: dict[int, list[Quote]] = {}
         for item in self._get("odds/live"):
+            self.odds_meta[item["fixture"]["id"]] = {"update": item.get("update"), "status": item.get("status")}
             quotes = parse_live_odds(item, names)
             if quotes:
                 out.setdefault(quotes[0].fixture_id, []).extend(quotes)
@@ -131,6 +133,17 @@ class ApiFootball:
         if not items:
             return None
         return parse_result(items[0])
+
+    def coverage(self, league_id: int) -> dict | None:
+        """Cobertura declarada de la liga en su temporada actual (estadísticas, eventos, cuotas)."""
+        items = self._get("leagues", id=league_id, current="true")
+        if not items:
+            return None
+        league = items[0].get("league") or {}
+        seasons = items[0].get("seasons") or []
+        season = next((x for x in seasons if x.get("current")), seasons[-1] if seasons else {})
+        return {"name": league.get("name"), "country": (items[0].get("country") or {}).get("name"),
+                "season": season.get("year"), "coverage": season.get("coverage") or {}}
 
     def inspect(self) -> tuple[Counter, Counter, dict]:
         """Ligas en vivo, nombres de mercado y una muestra de valores crudos (para configurar y verificar el mapeo)."""
@@ -252,9 +265,12 @@ def _iso_to_epoch(value) -> float | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if dt.tzinfo is None:  # la API trabaja en UTC; sin zona, .timestamp() asumiría la hora local del equipo
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 def _parse_line(handicap, value: str) -> float | None:

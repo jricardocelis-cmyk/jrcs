@@ -105,8 +105,11 @@ def cmd_snapshot(args) -> int:
         return 1
     model, now = GoalModel(cfg.model), time.time()
     matches, odds = provider.live_matches(), provider.live_odds()
-    print(f"{len(matches)} partidos en vivo · {len(odds)} con cuotas de mercados de goles leídas"
+    live_ids = {m.fixture_id for m in matches}
+    print(f"{len(matches)} partidos en vivo · {sum(1 for i in odds if i in live_ids)} con cuotas de mercados de goles leídas"
           f" · requests restantes hoy: {provider.remaining_requests if provider.remaining_requests is not None else 'n/d'}")
+    # El diagnóstico muestra los números aunque la cuota sea "vieja" y reporta la edad aparte.
+    diag_cfg = replace(cfg.value, max_odds_age_s=0.0)
     for m in matches:
         quotes = odds.get(m.fixture_id, [])
         print(f"\n{m.league_name} ({m.country}) · {m.home.name} {m.home.goals}-{m.away.goals} {m.away.name}"
@@ -116,6 +119,14 @@ def cmd_snapshot(args) -> int:
             continue
         read = Counter(q.market.value for q in quotes)
         print("  cuotas leídas: " + ", ".join(f"{k}={v}" for k, v in sorted(read.items())))
+        ages = [now - q.updated_at for q in quotes if q.updated_at is not None]
+        raw_update = (provider.odds_meta.get(m.fixture_id) or {}).get("update")
+        if ages:
+            limit = cfg.value.max_odds_age_s
+            verdict = f" → el agente las descartaría (límite {limit:.0f} s)" if limit > 0 and max(ages) > limit else ""
+            print(f"  hora de las cuotas (campo update de la API): {raw_update} · hace {max(ages):.0f} s{verdict}")
+        else:
+            print(f"  hora de las cuotas (campo update de la API): {raw_update!r} · no interpretable: no se valida edad")
         if not args.no_stats:
             m = provider.enrich(m)
         print(f"  tiros {_fmt_stat(m.home.shots, m.away.shots)} · a puerta "
@@ -126,7 +137,7 @@ def cmd_snapshot(args) -> int:
             print(f"  fuera de juego para alertas: {gate}")
         probs = model.evaluate(m)
         print(f"  goles esperados restantes: local {probs.lam_home:.2f} / visita {probs.lam_away:.2f}")
-        evals = evaluate_quotes(m, quotes, probs, cfg.value, now)
+        evals = evaluate_quotes(m, quotes, probs, diag_cfg, now)
         for e in sorted(evals, key=lambda e: (e.market.value, e.line or 0.0, e.selection)):
             label = selection_label(e.market, e.selection, e.line, m.home.name, m.away.name)
             if e.p_model is None:
@@ -137,6 +148,29 @@ def cmd_snapshot(args) -> int:
                     nums += f" · EV {e.ev:+.1%}"
             verdict = "ALERTA (si el minuto lo permite)" if e.reason is None else f"descartada: {e.reason}"
             print(f"    {label:<28} @{e.odds:<6.2f} {nums:<42} → {verdict}")
+    return 0
+
+
+def cmd_coverage(args) -> int:
+    """Cobertura declarada por la API para una liga: ¿hay estadísticas, eventos y cuotas?"""
+    cfg = load_config(args.config)
+    provider = build_provider(cfg)
+    if not isinstance(provider, ApiFootball):
+        print("este comando solo aplica a api-football")
+        return 1
+    ids = args.league or list(cfg.provider.leagues) or [281]
+    for lid in ids:
+        info = provider.coverage(lid)
+        if info is None:
+            print(f"liga {lid}: la API no la reconoce")
+            continue
+        cov = info["coverage"]
+        fx = cov.get("fixtures") or {}
+        print(f"liga {lid}: {info['name']} ({info['country']}) · temporada {info['season']}")
+        print(f"  estadísticas por partido (tiros, xG): {fx.get('statistics_fixtures', 'n/d')}")
+        print(f"  eventos (goles, tarjetas):            {fx.get('events', 'n/d')}")
+        print(f"  cuotas:                               {cov.get('odds', 'n/d')}  (cobertura declarada; las cuotas en vivo pueden faltar igual)")
+        print(f"  cobertura completa: {json.dumps(cov, ensure_ascii=False)}")
     return 0
 
 
@@ -157,11 +191,14 @@ def main(argv: list[str] | None = None) -> int:
         ("markets", cmd_markets, "ligas y mercados que devuelve tu cuenta de API-Football"),
         ("test-notify", cmd_test_notify, "enviar un mensaje de prueba por los canales configurados"),
         ("snapshot", cmd_snapshot, "un ciclo en vivo sin alertas: qué calcula el modelo y qué filtro descarta cada apuesta"),
+        ("coverage", cmd_coverage, "cobertura declarada de una liga: estadísticas, eventos y cuotas"),
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("-c", "--config", required=True)
         if name == "snapshot":
             p.add_argument("--no-stats", action="store_true", help="no pedir tiros/xG/tarjetas (ahorra requests)")
+        if name == "coverage":
+            p.add_argument("--league", type=int, action="append", help="id de liga (repetible); por defecto 281 (Liga 1 de Perú)")
         p.set_defaults(fn=fn)
     p = sub.add_parser("simulate", help="sesión simulada de punta a punta (sin API key)")
     p.add_argument("-c", "--config")

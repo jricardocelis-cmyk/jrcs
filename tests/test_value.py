@@ -120,7 +120,7 @@ def test_evaluate_quotes_explains_every_discard():
     assert ok[(OVER, 0.5)] is None and "prob. combinada" in ok[(UNDER, 0.5)]
     assert "incompleto" in reasons(ou(0.5, 1.50, 2.90)[:1])[(OVER, 0.5)]
     assert reasons(ou(0.5, 1.50, 2.90, suspended=True))[(OVER, 0.5)] == "cuota suspendida"
-    assert reasons(ou(0.5, 1.50, 2.90, updated_at=NOW - 600))[(OVER, 0.5)] == "cuota vieja"
+    assert reasons(ou(0.5, 1.50, 2.90, updated_at=NOW - 600))[(OVER, 0.5)] == "cuota vieja: actualizada hace 600 s (límite 60 s)"
     assert "divergencia" in reasons(ou(0.5, 1.90, 1.90))[(OVER, 0.5)]
     assert "no soportada" in reasons(ou(1.0, 1.50, 2.90))[(OVER, 1.0)]
     assert "fuera de" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)] or "EV" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)]
@@ -136,3 +136,19 @@ def test_find_signals_is_exactly_the_evaluations_without_a_reason():
     passing = [(e.market, e.selection, e.line) for e in evaluate_quotes(match(), quotes, PROBS, cfg, NOW) if e.reason is None]
     signals = [(s.market, s.selection, s.line) for s in find_signals(match(), quotes, PROBS, cfg, NOW)]
     assert sorted(signals, key=str) == sorted(passing, key=str) and signals
+
+
+def test_default_thresholds_can_fire_on_a_balanced_main_line():
+    """Regresión: la API real ofrece UNA línea centrada (~50/50). Con min_prob=0.60 nada podía alertar ahí."""
+    lam = -math.log(1 - 0.60)  # el modelo ve 60% de Over 0.5
+    probs = MatchProbs(0, 0, lam / 2, lam / 2)
+    sigs = find_signals(match(), ou(0.5, 1.95, 1.85), probs, ValueConfig(), NOW)
+    assert [(s.selection, s.line) for s in sigs] == [(OVER, 0.5)]
+    assert 0.55 <= sigs[0].p_final < 0.60 and sigs[0].ev >= 0.06
+
+
+def test_quote_age_check_can_be_disabled():
+    from dataclasses import replace
+    old = ou(0.5, 1.50, 2.90, updated_at=NOW - 600)
+    assert find_signals(match(), old, PROBS, ValueConfig(), NOW) == []
+    assert len(find_signals(match(), old, PROBS, replace(ValueConfig(), max_odds_age_s=0), NOW)) == 1

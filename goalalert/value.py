@@ -16,14 +16,16 @@ from .models import (
 class ValueConfig:
     markets: tuple[str, ...] = ("over_under", "btts", "next_goal")
     min_ev: float = 0.06  # EV mínimo con la probabilidad combinada
-    min_prob: float = 0.60  # probabilidad combinada mínima de acertar
+    # Las líneas en vivo reales vienen centradas (~50%). Con min_prob=0.60, market_weight=0.40 y
+    # max_divergence=0.15 una línea 50/50 nunca puede alertar (haría falta un 67% del modelo = 17 pp de brecha).
+    min_prob: float = 0.55  # probabilidad combinada mínima de acertar
     min_odds: float = 1.40
     max_odds: float = 4.00
     min_minute: int = 20  # antes de ~20' el modelo es casi solo el prior de liga: el mercado lo conoce mejor
     max_minute: int = 82
     market_weight: float = 0.40  # peso del mercado (sin margen) en la probabilidad final
     max_divergence: float = 0.15  # |p_modelo - p_mercado| mayor => dato viejo o modelo roto
-    max_odds_age_s: float = 60.0
+    max_odds_age_s: float = 60.0  # 0 desactiva el chequeo (el reconfirmado previo a cada alerta sigue activo)
     kelly_fraction: float = 0.10
     max_stake_pct: float = 0.015  # tope de stake como fracción del bankroll
 
@@ -170,9 +172,11 @@ def evaluate_quotes(
         if any(q.suspended or q.odds <= 1.0 for q in group):
             reject("cuota suspendida")
             continue
-        if any(q.updated_at is not None and now - q.updated_at > cfg.max_odds_age_s for q in group):
-            reject("cuota vieja")
-            continue
+        if cfg.max_odds_age_s > 0:
+            ages = [now - q.updated_at for q in group if q.updated_at is not None]
+            if ages and max(ages) > cfg.max_odds_age_s:
+                reject(f"cuota vieja: actualizada hace {max(ages):.0f} s (límite {cfg.max_odds_age_s:.0f} s)")
+                continue
 
         overround = sum(1 / q.odds for q in group)
         for sel, q in by_sel.items():

@@ -88,3 +88,25 @@ def test_markets_lists_leagues_mapping_and_raw_samples(fake_api, capsys):
     assert "Muestra de valores crudos" in out
     assert '"value": "Over 2.5"' in out  # se ve cómo es «Match Goals» sin tener que adivinar
     assert "Corners Over/Under" not in out.split("Muestra de valores crudos")[1]
+
+
+def test_snapshot_shows_numbers_and_the_age_of_stale_quotes_instead_of_hiding_them(fake_api, capsys, monkeypatch):
+    stale = dict(ODDS, update="2020-01-01T00:00:00+00:00")
+    original = ApiFootball._get
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [stale] if path == "odds/live" else original(self, path, **p))
+    main(["snapshot", "-c", str(EXAMPLE)])
+    out = capsys.readouterr().out
+    assert "campo update de la API): 2020-01-01T00:00:00+00:00" in out
+    assert "el agente las descartaría (límite 60 s)" in out
+    assert "modelo 82% · mercado 68%" in out  # los números se ven aunque el agente real descartaría la cuota
+
+
+def test_coverage_prints_what_the_league_declares(fake_api, capsys, monkeypatch):
+    payload = [{"league": {"id": 281, "name": "Liga 1"}, "country": {"name": "Peru"}, "seasons": [
+        {"year": 2025, "current": False, "coverage": {}},
+        {"year": 2026, "current": True, "coverage": {"fixtures": {"events": True, "statistics_fixtures": False}, "odds": True}}]}]
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: payload)
+    assert main(["coverage", "-c", str(EXAMPLE)]) == 0
+    out = capsys.readouterr().out
+    assert "liga 281: Liga 1 (Peru) · temporada 2026" in out
+    assert "estadísticas por partido (tiros, xG): False" in out and "eventos (goles, tarjetas):            True" in out

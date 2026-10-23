@@ -24,21 +24,22 @@ max_enrich_per_cycle = 15
 
 # Si `goalalert markets` muestra nombres distintos, agrégalos aquí (comparación exacta, sin mayúsculas).
 # [provider.bet_names]
-# over_under = ["over/under line", "match goals"]
+# over_under = ["over/under line"]
 # btts = ["both teams to score"]
 # next_goal = ["next goal"]
 
 [value]
 markets = ["over_under", "btts", "next_goal"]
 min_ev = 0.06                # valor esperado mínimo con la probabilidad combinada
-min_prob = 0.60              # probabilidad mínima de acertar
+min_prob = 0.55              # probabilidad combinada mínima de acertar. Las líneas en vivo vienen centradas (~50%):
+                             # con 0.60 y max_divergence = 0.15 una línea 50/50 nunca podría alertar
 min_odds = 1.40
 max_odds = 4.00
 min_minute = 20              # antes de ~20' el modelo es casi solo el prior de liga y el mercado lo conoce mejor
 max_minute = 82              # al final las cuotas se suspenden y el margen domina
 market_weight = 0.40         # 0 = confiar solo en el modelo; 1 = solo en el mercado (nunca alerta)
 max_divergence = 0.15        # modelo vs mercado: más que esto suele ser dato viejo o modelo roto
-max_odds_age_s = 60
+max_odds_age_s = 60           # 0 desactiva el chequeo de edad de la cuota (se reconfirma antes de cada alerta)
 kelly_fraction = 0.10
 max_stake_pct = 0.015        # tope por señal como fracción del bankroll
 

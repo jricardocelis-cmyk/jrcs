@@ -143,3 +143,12 @@ def test_match_goals_is_not_mapped_until_its_values_are_confirmed():
     item = odds_item()
     item["odds"] = [{"name": "Match Goals", "values": [{"value": "Over 2.5", "odd": "1.9"}]}]
     assert parse_live_odds(item, NAMES) == []
+
+
+def test_timestamps_without_zone_are_utc_not_local_time():
+    from goalalert.providers.apifootball import _iso_to_epoch
+    utc = _iso_to_epoch("2026-10-23T01:00:00+00:00")
+    assert _iso_to_epoch("2026-10-23T01:00:00") == utc  # sin zona => UTC, no la hora del equipo
+    assert _iso_to_epoch("2026-10-23T01:00:00Z") == utc
+    assert _iso_to_epoch("2026-10-22T20:00:00-05:00") == utc
+    assert _iso_to_epoch("basura") is None and _iso_to_epoch(None) is None
