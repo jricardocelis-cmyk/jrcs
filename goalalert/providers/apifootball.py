@@ -162,6 +162,7 @@ class ApiFootball:
                 if league_ids and league.get("id") not in league_ids:
                     continue
                 out.append({
+                    "id": fx.get("id"),
                     "when": (fx.get("date") or "")[:16].replace("T", " "),
                     "status": (fx.get("status") or {}).get("short") or "",
                     "home": (teams.get("home") or {}).get("name", "?"),

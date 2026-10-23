@@ -139,14 +139,14 @@ def test_coverage_accepts_explicit_leagues(fake_api, capsys, monkeypatch):
 
 def test_schedule_prints_the_games_of_the_configured_leagues(fake_api, capsys, monkeypatch):
     def game(lid, name, country, home):
-        return {"fixture": {"date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}},
+        return {"fixture": {"id": 777, "date": "2026-10-24T15:30:00-05:00", "status": {"short": "NS"}},
                 "league": {"id": lid, "name": name, "country": country}, "teams": {"home": {"name": home}, "away": {"name": "Rival"}}}
 
     monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [game(2, "UEFA Champions League", "World", "Real Madrid"),
                                                                        game(999, "Liga Ajena", "X", "Otro")])
     assert main(["schedule", "-c", str(EXAMPLE), "--days", "1"]) == 0
     out = capsys.readouterr().out
-    assert "2026-10-24 15:30 (hora de Lima) · UEFA Champions League (World) · Real Madrid vs Rival · NS" in out
+    assert "2026-10-24 15:30 (hora de Lima) · UEFA Champions League (World) · Real Madrid vs Rival · NS · id 777" in out
     assert "Otro" not in out  # fuera de las ligas configuradas
 
 

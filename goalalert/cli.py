@@ -185,7 +185,7 @@ def cmd_schedule(args) -> int:
         return 0
     for g in games:
         league = f"{g['league']} ({g['country']})" if g["country"] else g["league"]
-        print(f"{g['when']} (hora de Lima) · {league} · {g['home']} vs {g['away']} · {g['status']}")
+        print(f"{g['when']} (hora de Lima) · {league} · {g['home']} vs {g['away']} · {g['status']} · id {g['id']}")
     return 0
 
 
