@@ -145,6 +145,15 @@ def match_gate(match: LiveMatch, cfg: ValueConfig) -> str | None:
     return None
 
 
+def odds_state_gate(match: LiveMatch, odds_score: tuple[int, int] | None) -> str | None:
+    """Las cuotas de la API llegan con ~40 s de retraso. Si cayó un gol en ese intervalo, el marcador del partido ya
+    cambió pero los precios son del marcador anterior: anclar el modelo ahí daría tasas falsas. None si no hay dato."""
+    if odds_score is None or odds_score == (match.home.goals, match.away.goals):
+        return None
+    return (f"las cuotas son de otro marcador ({odds_score[0]}-{odds_score[1]} en las cuotas, "
+            f"{match.home.goals}-{match.away.goals} en el partido): la API las actualiza con retraso")
+
+
 def evaluate_quotes(
     match: LiveMatch,
     quotes: list[Quote],

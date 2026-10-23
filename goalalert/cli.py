@@ -18,7 +18,7 @@ from .providers import ProviderError
 from .providers.apifootball import ApiFootball
 from .providers.sim import SimProvider
 from .store import Store
-from .value import evaluate_quotes, match_gate, selection_label
+from .value import evaluate_quotes, match_gate, odds_state_gate, selection_label
 
 
 def print_report(store: Store) -> None:
@@ -132,6 +132,10 @@ def cmd_snapshot(args) -> int:
             print(f"  hora de las cuotas (campo update de la API): {raw_update} · hace {max(ages):.0f} s{verdict}")
         else:
             print(f"  hora de las cuotas (campo update de la API): {raw_update!r} · no interpretable: no se valida edad")
+        stale_state = odds_state_gate(m, (provider.odds_meta.get(m.fixture_id) or {}).get("score"))
+        if stale_state:
+            print(f"  {stale_state} → el agente no evalúa este partido hasta que las cuotas se actualicen")
+            continue
         if not args.no_stats:
             m = provider.enrich(m)
         print(f"  tiros {_fmt_stat(m.home.shots, m.away.shots)} · a puerta "

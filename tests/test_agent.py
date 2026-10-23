@@ -208,3 +208,12 @@ def test_run_forever_waits_longer_when_nothing_is_live():
     prov.live = False
     agent.run_forever(stop=lambda: len(sleeps) >= 2)
     assert sleeps == [30.0, 120.0]  # nadie juega: espera larga y 1 request por ciclo
+
+
+def test_lagging_odds_after_a_goal_block_the_match_until_they_catch_up():
+    prov = FakeProvider()
+    agent, out, now = make_agent(prov)
+    prov.odds_meta = {1: {"score": (1, 0)}}  # la API aún cotiza el 1-0 anterior; el partido ya está 0-0 en este escenario
+    assert agent.cycle() == [] and out.messages == []
+    prov.odds_meta = {1: {"score": (0, 0)}}  # las cuotas ya reflejan el marcador
+    assert len(agent.cycle()) == 1

@@ -57,6 +57,12 @@ Antes de enviar, el agente vuelve a consultar marcador, tarjetas y cuota de ese 
 
 Las ligas sin cobertura de estadísticas (frecuente en torneos locales menores) no generan alertas mientras `require_stats = true`, porque sin tiros ni xG el modelo solo tendría su prior y cualquier diferencia con el mercado sería ruido. Puedes desactivarlo, sabiendo que pierdes esa protección.
 
+## Qué esperar de las alertas
+
+En el primer `snapshot` real con el prior de mercado (6 partidos en vivo, 5 con cuotas, unas 40 apuestas evaluadas) ninguna tuvo valor esperado positivo: la mejor quedó en −1.5% y la mayoría entre −5% y −10%. No es una falla. El mercado de referencia cobra un margen de ~5-6% por apuesta, y el modelo parte de ese mismo mercado, así que para llegar a +6% tendría que estar ~12% mejor informado que él, lo que solo ocurre cuando la presión observada (tiros, xG) contradice el precio. Por eso las alertas serán raras, y que haya semanas con pocas o ninguna es normal.
+
+Los datos tienen dos límites que conviene conocer. Las cuotas de la API llegan con ~40 s de retraso respecto al partido (sin relación con el reloj de tu PC), por lo que el agente descarta un partido cuando las cuotas son de otro marcador que el del partido (cayó un gol en ese intervalo) y reconfirma marcador y cuota justo antes de alertar. Y solo los partidos con estadísticas pueden alertar: en el primer `snapshot` real, la Libertadores traía tiros y xG y las ligas menores (Bolivia, Caribe, Venezuela, USL) no traían ninguno. La Liga 1 declara cobertura de estadísticas; si esa cobertura llega partido a partido en vivo, se comprueba con `snapshot` mientras juega.
+
 ## Calibración
 
 Cada alerta queda en SQLite (`goalalert.db`) y se liquida sola cuando termina el partido con el marcador a 90'. El próximo gol se anula si ambos equipos anotaron después de la señal, porque el orden no se puede inferir del marcador final.

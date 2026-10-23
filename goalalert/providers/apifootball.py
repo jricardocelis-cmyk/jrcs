@@ -102,7 +102,8 @@ class ApiFootball:
         names = _reverse_bet_names(self.bet_names)
         out: dict[int, list[Quote]] = {}
         for item in self._get("odds/live"):
-            self.odds_meta[item["fixture"]["id"]] = {"update": item.get("update"), "status": item.get("status")}
+            self.odds_meta[item["fixture"]["id"]] = {
+                "update": item.get("update"), "status": item.get("status"), "score": _odds_score(item)}
             quotes = parse_live_odds(item, names, self.clock_skew_s)
             if quotes:
                 out.setdefault(quotes[0].fixture_id, []).extend(quotes)
@@ -133,6 +134,9 @@ class ApiFootball:
         names = _reverse_bet_names(self.bet_names)
         quotes: list[Quote] = []
         for item in self._get("odds/live", fixture=fixture_id):
+            score = _odds_score(item)
+            if match is not None and score is not None and score != (match.home.goals, match.away.goals):
+                continue  # cuotas de otro marcador: no sirven para confirmar una alerta
             quotes.extend(parse_live_odds(item, names, self.clock_skew_s))
         return match, quotes
 
@@ -309,6 +313,16 @@ def _parse_line(handicap, value: str) -> float | None:
         if m:
             return float(m.group())
     return None
+
+
+def _odds_score(item: dict) -> tuple[int, int] | None:
+    """Marcador con el que la API generó las cuotas (teams.*.goals del ítem de odds/live), si lo trae."""
+    teams = item.get("teams") or {}
+    home, away = (teams.get("home") or {}).get("goals"), (teams.get("away") or {}).get("goals")
+    try:
+        return (int(home), int(away)) if home is not None and away is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def parse_live_odds(item: dict, bet_names: dict[str, Market], clock_skew: float = 0.0) -> list[Quote]:

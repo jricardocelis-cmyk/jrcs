@@ -152,3 +152,12 @@ def test_quote_age_check_can_be_disabled():
     old = ou(0.5, 1.50, 2.90, updated_at=NOW - 600)
     assert find_signals(match(), old, PROBS, ValueConfig(), NOW) == []
     assert len(find_signals(match(), old, PROBS, replace(ValueConfig(), max_odds_age_s=0), NOW)) == 1
+
+
+def test_odds_from_a_different_score_are_not_trusted():
+    from goalalert.value import odds_state_gate
+    m = match()  # 0-0
+    assert odds_state_gate(m, (0, 0)) is None
+    assert odds_state_gate(m, None) is None  # la API no lo informó: no se puede comprobar
+    msg = odds_state_gate(m, (1, 0))
+    assert "otro marcador (1-0 en las cuotas, 0-0 en el partido)" in msg

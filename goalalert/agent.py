@@ -14,7 +14,7 @@ from .notifiers import send_all
 from .providers import ProviderError
 from .settle import outcome_for
 from .store import Store
-from .value import Signal, find_signals, kelly_stake
+from .value import Signal, find_signals, kelly_stake, odds_state_gate
 
 log = logging.getLogger(__name__)
 
@@ -48,6 +48,9 @@ class Agent:
                 continue  # antes de enriquecer: cada enrich cuesta requests
             if self.store.count_for_fixture(m.fixture_id) >= acfg.max_signals_per_match:
                 continue
+            odds_score = (getattr(self.provider, "odds_meta", {}).get(m.fixture_id) or {}).get("score")
+            if odds_state_gate(m, odds_score) is not None:
+                continue  # cayó un gol y las cuotas aún no lo reflejan: se reintenta en el próximo ciclo
             m = self.provider.enrich(m)
             if acfg.require_stats and not _has_stats(m):
                 continue

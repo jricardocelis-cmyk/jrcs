@@ -201,3 +201,22 @@ def test_upcoming_queries_one_day_at_a_time_without_the_next_parameter(monkeypat
     assert all(p["league"] == 281 and p["timezone"] == "America/Lima" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", p["date"]) for _, p in calls)
     assert [p["date"] for _, p in calls] == sorted(p["date"] for _, p in calls) and len({p["date"] for _, p in calls}) == 3
     assert games[0]["home"] == "Alianza Lima" and games[0]["when"].endswith("15:30") and [g["when"] for g in games] == sorted(g["when"] for g in games)
+
+
+def test_live_odds_remember_the_score_the_odds_were_generated_with(monkeypatch):
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [odds_item()])
+    api = ApiFootball("k")
+    api.live_odds()
+    assert api.odds_meta[55]["score"] == (1, 0)
+
+
+def test_refresh_does_not_confirm_with_odds_of_another_score(monkeypatch):
+    def run(odds):
+        monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [fixture_item()] if path == "fixtures" else [odds])
+        return ApiFootball("k").refresh(55)
+
+    match, quotes = run(odds_item())  # el partido está 1-0 y las cuotas también
+    assert match.home.goals == 1 and quotes
+    stale = odds_item(teams={"home": {"id": 10, "goals": 0}, "away": {"id": 20, "goals": 0}})
+    match, quotes = run(stale)
+    assert match is not None and quotes == []

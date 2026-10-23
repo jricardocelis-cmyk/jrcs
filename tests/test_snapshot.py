@@ -156,3 +156,13 @@ def test_schedule_prints_the_games_found(fake_api, capsys, monkeypatch):
     assert main(["schedule", "-c", str(EXAMPLE), "--days", "1"]) == 0
     out = capsys.readouterr().out
     assert "liga 281: Primera División" in out and "2026-10-24 15:30 (hora de Lima) · Alianza Lima vs Sporting Cristal · NS" in out
+
+
+def test_snapshot_flags_odds_that_lag_behind_the_score(fake_api, capsys, monkeypatch):
+    lagging = dict(ODDS, teams={"home": {"id": 10, "goals": 1}, "away": {"id": 20, "goals": 0}})  # el partido está 0-0
+    original = ApiFootball._get
+    monkeypatch.setattr(ApiFootball, "_get", lambda self, path, **p: [lagging] if path == "odds/live" else original(self, path, **p))
+    main(["snapshot", "-c", str(EXAMPLE)])
+    out = capsys.readouterr().out
+    assert "las cuotas son de otro marcador (1-0 en las cuotas, 0-0 en el partido)" in out
+    assert "no evalúa este partido" in out and "ancla de mercado" not in out
