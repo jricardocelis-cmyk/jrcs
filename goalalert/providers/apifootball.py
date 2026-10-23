@@ -29,11 +29,19 @@ BASE_URL = "https://v3.football.api-sports.io"
 VOID_STATUSES = {"PST", "CANC", "ABD", "AWD", "WO"}
 FINISHED_STATUSES = {"FT", "AET", "PEN"}
 
+# Solo nombres vistos en cuotas en vivo reales. «Match Goals» existe pero NO se mapea hasta confirmar qué
+# son sus valores (`goalalert markets` los muestra): mezclarlo con Over/Under podría crear señales falsas.
 DEFAULT_BET_NAMES: dict[str, tuple[str, ...]] = {
-    "over_under": ("over/under line", "over/under", "match goals", "goals over/under"),
-    "btts": ("both teams to score", "both teams score"),
+    "over_under": ("over/under line",),
+    "btts": ("both teams to score",),
     "next_goal": ("next goal",),
 }
+
+# La API no tiene «próximo gol»: tiene «¿Qué equipo anotará el N-ésimo gol?». Equivale al próximo gol
+# solo cuando N = goles actuales + 1; los demás N se descartan.
+_NTH_GOAL = re.compile(r"^which team will score the (\d+)(?:st|nd|rd|th) goal\??$")
+# Nombres que `markets` muestra con valores crudos para verificar el mapeo.
+_SAMPLE_KEYS = ("over/under", "match goals", "both teams to score", "which team will score the", "next goal")
 
 _HOME_WORDS = {"home", "1"}
 _AWAY_WORDS = {"away", "2"}
@@ -124,14 +132,26 @@ class ApiFootball:
             return None
         return parse_result(items[0])
 
-    def inspect(self) -> tuple[Counter, Counter]:
-        """Ligas en vivo y nombres de mercado que devuelve tu cuenta (para configurar ligas y alias)."""
+    def inspect(self) -> tuple[Counter, Counter, dict]:
+        """Ligas en vivo, nombres de mercado y una muestra de valores crudos (para configurar y verificar el mapeo)."""
         leagues = Counter()
         for it in self._get("fixtures", live="all"):
             m = parse_live_fixture(it)
             leagues[(m.league_id, m.league_name, m.country)] += 1
-        bets = Counter(b.get("name") or "?" for it in self._get("odds/live") for b in it.get("odds") or [])
-        return leagues, bets
+        bets: Counter = Counter()
+        samples: dict[str, dict] = {}
+        for it in self._get("odds/live"):
+            teams = it.get("teams") or {}
+            score = f"{(teams.get('home') or {}).get('goals', '?')}-{(teams.get('away') or {}).get('goals', '?')}"
+            for b in it.get("odds") or []:
+                name = b.get("name") or "?"
+                bets[name] += 1
+                low = name.lower()
+                if name not in samples and any(k in low for k in _SAMPLE_KEYS) and not any(
+                        x in low for x in ("corner", "1st half", "2nd half")):
+                    samples[name] = {"fixture": it["fixture"]["id"], "score": score,
+                                     "values": (b.get("values") or [])[:8]}
+        return leagues, bets, samples
 
 
 # ---- Parsers (puros, testeables) -------------------------------------------------------
@@ -257,7 +277,13 @@ def parse_live_odds(item: dict, bet_names: dict[str, Market]) -> list[Quote]:
 
     quotes: list[Quote] = []
     for bet in item.get("odds") or []:
-        market = bet_names.get((bet.get("name") or "").strip().lower())
+        name = (bet.get("name") or "").strip().lower()
+        market = bet_names.get(name)
+        nth = _NTH_GOAL.match(name)
+        if market is None and nth:
+            if int(nth.group(1)) != total_goals + 1:
+                continue  # gol 3 con 0-0 en juego: no es el próximo gol
+            market = Market.NEXT_GOAL
         if market is None:
             continue
         for v in bet.get("values") or []:

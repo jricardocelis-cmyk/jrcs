@@ -56,13 +56,7 @@ class Signal:
         return (self.fixture_id, self.market.value, self.selection, self.line)
 
     def label(self) -> str:
-        if self.market is Market.OVER_UNDER:
-            word = "Más de" if self.selection == OVER else "Menos de"
-            return f"{word} {self.line:g} goles"
-        if self.market is Market.BTTS:
-            return f"Ambos anotan: {'Sí' if self.selection == YES else 'No'}"
-        who = {HOME: self.home, AWAY: self.away, NONE: "Ninguno"}[self.selection]
-        return f"Próximo gol: {who}"
+        return selection_label(self.market, self.selection, self.line, self.home, self.away)
 
     @property
     def min_odds_display(self) -> float:
@@ -94,6 +88,16 @@ class Signal:
         )
 
 
+def selection_label(market: Market, selection: str, line: float | None, home: str, away: str) -> str:
+    if market is Market.OVER_UNDER:
+        word = "Más de" if selection == OVER else "Menos de"
+        return f"{word} {line:g} goles"
+    if market is Market.BTTS:
+        return f"Ambos anotan: {'Sí' if selection == YES else 'No'}"
+    who = {HOME: home, AWAY: away, NONE: "Ninguno"}[selection]
+    return f"Próximo gol: {who}"
+
+
 def model_prob(probs: MatchProbs, market: Market, selection: str, line: float | None) -> float | None:
     if market is Market.OVER_UNDER:
         if line is None:
@@ -115,6 +119,89 @@ def kelly_stake(p: float, odds: float, fraction: float, cap: float) -> float:
     return max(0.0, min(full * fraction, cap))
 
 
+@dataclass(frozen=True)
+class Evaluation:
+    """Una apuesta evaluada. `reason` es None si pasa todos los filtros; si no, por qué se descarta."""
+    market: Market
+    selection: str
+    line: float | None
+    odds: float
+    bookmaker: str
+    p_model: float | None = None
+    p_market: float | None = None
+    p_final: float | None = None
+    ev: float | None = None
+    reason: str | None = None
+
+
+def match_gate(match: LiveMatch, cfg: ValueConfig) -> str | None:
+    """Motivo por el que el partido no se evalúa ahora, o None si está dentro de la ventana."""
+    if match.status not in LIVE_STATUSES:
+        return f"estado {match.status or '?'}: solo se evalúan 1H y 2H"
+    if not (cfg.min_minute <= match.elapsed <= cfg.max_minute):
+        return f"minuto {match.elapsed} fuera de la ventana {cfg.min_minute}-{cfg.max_minute}"
+    return None
+
+
+def evaluate_quotes(
+    match: LiveMatch,
+    quotes: list[Quote],
+    probs: MatchProbs,
+    cfg: ValueConfig,
+    now: float,
+) -> list[Evaluation]:
+    """Aplica los filtros de valor a cada cuota y devuelve todas, con su motivo de descarte si lo hay."""
+    groups: dict[tuple, list[Quote]] = defaultdict(list)
+    for q in quotes:
+        if q.market.value in cfg.markets:
+            groups[(q.market, q.line, q.bookmaker)].append(q)
+
+    out: list[Evaluation] = []
+    for (market, line, book), group in groups.items():
+        def reject(reason: str) -> None:
+            out.extend(Evaluation(market, q.selection, line, q.odds, book, reason=reason) for q in group)
+
+        by_sel = {q.selection: q for q in group}
+        missing = COMPLETE_SETS[market] - set(by_sel)
+        if missing or len(group) != len(by_sel):
+            detail = f" (faltan: {', '.join(sorted(missing))})" if missing else ""
+            reject(f"mercado incompleto o duplicado{detail}: no se puede quitar el margen ni validar")
+            continue
+        if any(q.suspended or q.odds <= 1.0 for q in group):
+            reject("cuota suspendida")
+            continue
+        if any(q.updated_at is not None and now - q.updated_at > cfg.max_odds_age_s for q in group):
+            reject("cuota vieja")
+            continue
+
+        overround = sum(1 / q.odds for q in group)
+        for sel, q in by_sel.items():
+            base = dict(market=market, selection=sel, line=line, odds=q.odds, bookmaker=book)
+            p_model = model_prob(probs, market, sel, line)
+            if p_model is None:
+                out.append(Evaluation(**base, reason="línea no soportada (solo líneas .5)"))
+                continue
+            p_market = (1 / q.odds) / overround
+            gap = abs(p_model - p_market)
+            if gap > cfg.max_divergence:
+                out.append(Evaluation(
+                    **base, p_model=p_model, p_market=p_market,
+                    reason=f"divergencia {gap * 100:.0f} pp > {cfg.max_divergence * 100:.0f} pp (dato viejo o modelo roto)"))
+                continue
+            p_final = (1 - cfg.market_weight) * p_model + cfg.market_weight * p_market
+            ev = p_final * q.odds - 1
+            if not (cfg.min_odds <= q.odds <= cfg.max_odds):
+                reason = f"cuota {q.odds:.2f} fuera de {cfg.min_odds:.2f}-{cfg.max_odds:.2f}"
+            elif p_final < cfg.min_prob:
+                reason = f"prob. combinada {p_final:.0%} < {cfg.min_prob:.0%}"
+            elif ev < cfg.min_ev:
+                reason = f"EV {ev:+.1%} < {cfg.min_ev:.0%}"
+            else:
+                reason = None
+            out.append(Evaluation(**base, p_model=p_model, p_market=p_market, p_final=p_final, ev=ev, reason=reason))
+    return out
+
+
 def find_signals(
     match: LiveMatch,
     quotes: list[Quote],
@@ -122,50 +209,24 @@ def find_signals(
     cfg: ValueConfig,
     now: float,
 ) -> list[Signal]:
-    if match.status not in LIVE_STATUSES or not (cfg.min_minute <= match.elapsed <= cfg.max_minute):
+    if match_gate(match, cfg) is not None:
         return []
-
-    groups: dict[tuple, list[Quote]] = defaultdict(list)
-    for q in quotes:
-        if q.market.value in cfg.markets:
-            groups[(q.market, q.line, q.bookmaker)].append(q)
-
     out: list[Signal] = []
-    for (market, line, _book), group in groups.items():
-        by_sel = {q.selection: q for q in group}
-        if set(by_sel) != COMPLETE_SETS[market] or len(group) != len(by_sel):
-            continue  # sin mercado completo no se puede quitar el margen ni validar
-        if any(q.suspended or q.odds <= 1.0 for q in group):
+    for e in evaluate_quotes(match, quotes, probs, cfg, now):
+        if e.reason is not None:
             continue
-        if any(q.updated_at is not None and now - q.updated_at > cfg.max_odds_age_s for q in group):
-            continue
-
-        overround = sum(1 / q.odds for q in group)
-        for sel, q in by_sel.items():
-            p_model = model_prob(probs, market, sel, line)
-            if p_model is None:
-                continue
-            p_market = (1 / q.odds) / overround
-            if abs(p_model - p_market) > cfg.max_divergence:
-                continue
-            p_final = (1 - cfg.market_weight) * p_model + cfg.market_weight * p_market
-            ev = p_final * q.odds - 1
-            if not (cfg.min_odds <= q.odds <= cfg.max_odds):
-                continue
-            if p_final < cfg.min_prob or ev < cfg.min_ev:
-                continue
-            out.append(Signal(
-                fixture_id=match.fixture_id,
-                league=f"{match.league_name} ({match.country})" if match.country else match.league_name,
-                home=match.home.name, away=match.away.name,
-                minute=match.elapsed,
-                home_goals=match.home.goals, away_goals=match.away.goals,
-                market=market, selection=sel, line=line,
-                odds=q.odds, bookmaker=q.bookmaker,
-                p_model=p_model, p_market=p_market, p_final=p_final, ev=ev,
-                stake_pct=kelly_stake(p_final, q.odds, cfg.kelly_fraction, cfg.max_stake_pct),
-                lam_home=probs.lam_home, lam_away=probs.lam_away,
-                min_odds=(1 + cfg.min_ev) / p_final,
-            ))
-    out.sort(key=lambda s: s.ev, reverse=True)
+        out.append(Signal(
+            fixture_id=match.fixture_id,
+            league=f"{match.league_name} ({match.country})" if match.country else match.league_name,
+            home=match.home.name, away=match.away.name,
+            minute=match.elapsed,
+            home_goals=match.home.goals, away_goals=match.away.goals,
+            market=e.market, selection=e.selection, line=e.line,
+            odds=e.odds, bookmaker=e.bookmaker,
+            p_model=e.p_model, p_market=e.p_market, p_final=e.p_final, ev=e.ev,
+            stake_pct=kelly_stake(e.p_final, e.odds, cfg.kelly_fraction, cfg.max_stake_pct),
+            lam_home=probs.lam_home, lam_away=probs.lam_away,
+            min_odds=(1 + cfg.min_ev) / e.p_final,
+        ))
+    out.sort(key=lambda sig: sig.ev, reverse=True)
     return out

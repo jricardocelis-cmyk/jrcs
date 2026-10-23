@@ -124,3 +124,22 @@ def test_parse_result_uses_90_minute_score_and_handles_voids():
     assert parse_result(result_item("FT")).finished
     assert not parse_result(result_item("2H")).finished
     assert parse_result(result_item("PST")).voided
+
+
+def test_which_team_will_score_the_nth_goal_is_the_next_goal_only_when_n_is_total_plus_one():
+    item = odds_item()  # marcador 1-0: el próximo gol es el 2.º
+    item["odds"] = [
+        {"name": "Which team will score the 1st goal?", "values": [{"value": "Home", "odd": "9.0"}]},
+        {"name": "Which team will score the 2nd goal?", "values": [
+            {"value": "Home", "odd": "2.1"}, {"value": "Away", "odd": "3.2"}, {"value": "No Goal", "odd": "6.0"}]},
+        {"name": "Which team will score the 3rd goal?", "values": [{"value": "Away", "odd": "7.0"}]},
+    ]
+    quotes = parse_live_odds(item, NAMES)
+    assert {(q.market, q.selection, q.odds) for q in quotes} == {
+        (Market.NEXT_GOAL, HOME, 2.1), (Market.NEXT_GOAL, AWAY, 3.2), (Market.NEXT_GOAL, NONE, 6.0)}
+
+
+def test_match_goals_is_not_mapped_until_its_values_are_confirmed():
+    item = odds_item()
+    item["odds"] = [{"name": "Match Goals", "values": [{"value": "Over 2.5", "odd": "1.9"}]}]
+    assert parse_live_odds(item, NAMES) == []

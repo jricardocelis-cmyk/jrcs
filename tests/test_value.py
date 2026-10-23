@@ -109,3 +109,30 @@ def test_min_odds_display_rounds_up_never_below_the_real_floor():
     for raw, shown in ((1.741, 1.75), (1.75, 1.75), (1.7501, 1.76), (1.50, 1.50)):
         assert replace(s, min_odds=raw).min_odds_display == pytest.approx(shown)
     assert s.min_odds_display >= s.min_odds and s.min_odds_display - s.min_odds < 0.01
+
+
+def test_evaluate_quotes_explains_every_discard():
+    from goalalert.value import evaluate_quotes, match_gate
+    cfg, probs = ValueConfig(), PROBS
+    reasons = lambda quotes, now=NOW: {(e.selection, e.line): e.reason for e in evaluate_quotes(match(), quotes, probs, cfg, now)}
+
+    ok = reasons(ou(0.5, 1.50, 2.90))
+    assert ok[(OVER, 0.5)] is None and "prob. combinada" in ok[(UNDER, 0.5)]
+    assert "incompleto" in reasons(ou(0.5, 1.50, 2.90)[:1])[(OVER, 0.5)]
+    assert reasons(ou(0.5, 1.50, 2.90, suspended=True))[(OVER, 0.5)] == "cuota suspendida"
+    assert reasons(ou(0.5, 1.50, 2.90, updated_at=NOW - 600))[(OVER, 0.5)] == "cuota vieja"
+    assert "divergencia" in reasons(ou(0.5, 1.90, 1.90))[(OVER, 0.5)]
+    assert "no soportada" in reasons(ou(1.0, 1.50, 2.90))[(OVER, 1.0)]
+    assert "fuera de" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)] or "EV" in reasons(ou(0.5, 1.30, 3.60))[(OVER, 0.5)]
+    assert "minuto 3 fuera de la ventana 20-82" == match_gate(match(elapsed=3), cfg)
+    assert match_gate(match(), cfg) is None
+    assert "HT" in match_gate(match(status="HT", elapsed=45), cfg)
+
+
+def test_find_signals_is_exactly_the_evaluations_without_a_reason():
+    from goalalert.value import evaluate_quotes
+    quotes = ou(0.5, 1.50, 2.90) + ou(1.5, 2.40, 1.55)
+    cfg = ValueConfig(min_prob=0.0, min_ev=-1.0)  # nada se descarta por prob./EV
+    passing = [(e.market, e.selection, e.line) for e in evaluate_quotes(match(), quotes, PROBS, cfg, NOW) if e.reason is None]
+    signals = [(s.market, s.selection, s.line) for s in find_signals(match(), quotes, PROBS, cfg, NOW)]
+    assert sorted(signals, key=str) == sorted(passing, key=str) and signals

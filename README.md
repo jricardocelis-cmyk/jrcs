@@ -20,11 +20,12 @@ El proveedor incluido es [API-Football](https://www.api-football.com) (marcador,
 ```bash
 cp config.example.toml config.toml
 export APIFOOTBALL_KEY=...
-python -m goalalert markets -c config.toml   # ligas en vivo (ids) y nombres de mercado de tu cuenta
+python -m goalalert markets -c config.toml   # ligas en vivo (ids), nombres de mercado y valores crudos de tu cuenta
+python -m goalalert snapshot -c config.toml  # un ciclo real sin alertas: qué calcula el modelo y por qué se descarta cada apuesta
 python -m goalalert run -c config.toml
 ```
 
-Los parsers de API-Football siguen la forma documentada de la API pero **no se contrastaron con respuestas reales** al escribirlos (no hubo acceso a su documentación desde el entorno de desarrollo). Ejecuta `markets` primero: si los nombres de mercado de tu cuenta difieren, corrígelos en `[provider.bet_names]`. Una discrepancia se manifiesta como cero alertas, no como alertas erróneas, porque el agente exige mercados completos (Over y Under, Sí y No, local/visita/ninguno) antes de evaluar.
+Con una cuenta real se confirmó la conexión, la lectura de partidos en vivo y los nombres de mercado. La lectura de las cuotas y el comportamiento del modelo sobre partidos reales se comprueban con `snapshot`, que imprime por cada partido en vivo el marcador, los tiros, los goles esperados y, para cada apuesta, la probabilidad del modelo, la del mercado y el motivo exacto por el que se descarta (o «ALERTA»). Es la herramienta para entender por qué no llegan alertas, y usa la misma lógica de filtros que el agente en vivo. «Match Goals» aparece en la lista de mercados pero no está mapeado a propósito: hasta confirmar con la muestra de valores crudos de `markets` que es un Over/Under comparable, mezclarlo podría generar señales falsas. El próximo gol se lee de «Which team will score the Nth goal?», y solo cuando N es los goles actuales más uno. Ejecuta `markets` primero: si los nombres de mercado de tu cuenta difieren, corrígelos en `[provider.bet_names]`. Una discrepancia se manifiesta como cero alertas, no como alertas erróneas, porque el agente exige mercados completos (Over y Under, Sí y No, local/visita/ninguno) antes de evaluar.
 
 Para fijar la liga local, pon su id en `leagues` (Liga 1 de Perú, Libertadores, etc.; los ids salen de `markets`). Con `leagues = []` vigila todo lo que esté en vivo.
 

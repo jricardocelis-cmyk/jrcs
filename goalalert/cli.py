@@ -2,16 +2,21 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
+import time
+from collections import Counter
 from dataclasses import replace
 
 from .agent import Agent
+from .model import GoalModel
 from .config import Config, ConfigError, build_notifiers, build_provider, load_config
 from .notifiers import ConsoleNotifier, send_all
 from .providers.apifootball import ApiFootball
 from .providers.sim import SimProvider
 from .store import Store
+from .value import evaluate_quotes, match_gate, selection_label
 
 
 def print_report(store: Store) -> None:
@@ -71,7 +76,7 @@ def cmd_markets(args) -> int:
     if not isinstance(provider, ApiFootball):
         print("este comando solo aplica a api-football")
         return 1
-    leagues, bets = provider.inspect()
+    leagues, bets, samples = provider.inspect()
     print("Ligas con partidos en vivo ahora (id · nombre · país · partidos):")
     for (lid, name, country), n in sorted(leagues.items(), key=lambda kv: -kv[1]):
         print(f"  {lid:>5} · {name} · {country} · {n}")
@@ -79,6 +84,59 @@ def cmd_markets(args) -> int:
     print("\nMercados con cuotas en vivo (✓ = ya mapeado en provider.bet_names):")
     for name, n in sorted(bets.items(), key=lambda kv: -kv[1]):
         print(f"  {'✓' if name.strip().lower() in mapped else ' '} {name} ({n})")
+    print("\nMuestra de valores crudos de los mercados de goles (primer partido que los trae):")
+    for name, smp in samples.items():
+        print(f"  {name}  [fixture {smp['fixture']}, marcador {smp['score']}]")
+        for v in smp["values"]:
+            print(f"      {json.dumps(v, ensure_ascii=False)}")
+    return 0
+
+
+def _fmt_stat(a, b) -> str:
+    return "n/d" if a is None and b is None else f"{'?' if a is None else a}-{'?' if b is None else b}"
+
+
+def cmd_snapshot(args) -> int:
+    """Un ciclo en vivo sin enviar alertas: muestra qué calculó el modelo y qué filtro descartó cada apuesta."""
+    cfg = load_config(args.config)
+    provider = build_provider(cfg)
+    if not isinstance(provider, ApiFootball):
+        print("este comando solo aplica a api-football")
+        return 1
+    model, now = GoalModel(cfg.model), time.time()
+    matches, odds = provider.live_matches(), provider.live_odds()
+    print(f"{len(matches)} partidos en vivo · {len(odds)} con cuotas de mercados de goles leídas"
+          f" · requests restantes hoy: {provider.remaining_requests if provider.remaining_requests is not None else 'n/d'}")
+    for m in matches:
+        quotes = odds.get(m.fixture_id, [])
+        print(f"\n{m.league_name} ({m.country}) · {m.home.name} {m.home.goals}-{m.away.goals} {m.away.name}"
+              f" · {m.status} {m.elapsed}'")
+        if not quotes:
+            print("  sin cuotas de over/under, ambos anotan o próximo gol para este partido")
+            continue
+        read = Counter(q.market.value for q in quotes)
+        print("  cuotas leídas: " + ", ".join(f"{k}={v}" for k, v in sorted(read.items())))
+        if not args.no_stats:
+            m = provider.enrich(m)
+        print(f"  tiros {_fmt_stat(m.home.shots, m.away.shots)} · a puerta "
+              f"{_fmt_stat(m.home.shots_on_target, m.away.shots_on_target)} · xG {_fmt_stat(m.home.xg, m.away.xg)}"
+              f" · rojas {m.home.red_cards}-{m.away.red_cards}{'' if m.red_known else ' (sin eventos: no verificadas)'}")
+        gate = match_gate(m, cfg.value)
+        if gate:
+            print(f"  fuera de juego para alertas: {gate}")
+        probs = model.evaluate(m)
+        print(f"  goles esperados restantes: local {probs.lam_home:.2f} / visita {probs.lam_away:.2f}")
+        evals = evaluate_quotes(m, quotes, probs, cfg.value, now)
+        for e in sorted(evals, key=lambda e: (e.market.value, e.line or 0.0, e.selection)):
+            label = selection_label(e.market, e.selection, e.line, m.home.name, m.away.name)
+            if e.p_model is None:
+                nums = ""
+            else:
+                nums = f"modelo {e.p_model:.0%} · mercado {e.p_market:.0%}"
+                if e.ev is not None:
+                    nums += f" · EV {e.ev:+.1%}"
+            verdict = "ALERTA (si el minuto lo permite)" if e.reason is None else f"descartada: {e.reason}"
+            print(f"    {label:<28} @{e.odds:<6.2f} {nums:<42} → {verdict}")
     return 0
 
 
@@ -98,9 +156,12 @@ def main(argv: list[str] | None = None) -> int:
         ("report", cmd_report, "calibración y ROI de las señales registradas"),
         ("markets", cmd_markets, "ligas y mercados que devuelve tu cuenta de API-Football"),
         ("test-notify", cmd_test_notify, "enviar un mensaje de prueba por los canales configurados"),
+        ("snapshot", cmd_snapshot, "un ciclo en vivo sin alertas: qué calcula el modelo y qué filtro descarta cada apuesta"),
     ):
         p = sub.add_parser(name, help=helptext)
         p.add_argument("-c", "--config", required=True)
+        if name == "snapshot":
+            p.add_argument("--no-stats", action="store_true", help="no pedir tiros/xG/tarjetas (ahorra requests)")
         p.set_defaults(fn=fn)
     p = sub.add_parser("simulate", help="sesión simulada de punta a punta (sin API key)")
     p.add_argument("-c", "--config")
